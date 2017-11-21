@@ -333,12 +333,14 @@ static void *thread_ref(void *arg)
 	return NULL;
 }
 
+// #define USE_PCM_FEEDBACK
 static void *thread_feedback(void *arg)
 {
 	BufferManager *manager = (BufferManager *)arg;
 
 	pvo_init();
 
+#ifdef USE_PCM_FEEDBACK
 	struct pcm_config config;
 	struct pcm *pcm;
 
@@ -365,6 +367,9 @@ static void *thread_feedback(void *arg)
 	printf("%s: pcm_get_buffer_size %d\n", __func__, pcm_get_buffer_size(pcm));
 
 	size = 512;
+#else
+	int size = 512;
+#endif
 	char *outBuffer = (char *)malloc(size);
 	DoneBuffer *inBuffer = NULL;
 
@@ -376,22 +381,31 @@ static void *thread_feedback(void *arg)
 				  (short *)outBuffer,
 				  (short *)inBuffer->refBuffer->buf);
 		if (ret) {
-			fprintf(stderr, "%s: failed to pro_process(ret: %d)\n",
+			fprintf(stderr, "%s: failed to pvo_process(ret: %d)\n",
 				__func__, ret);
 			break;
 		}
 
+		ret = PoVoGateSource(256, (short *)outBuffer);
+		if (ret)
+			fprintf(stderr, "%s: failed to PoVoGateSource(ret: %d)\n",
+				__func__, ret);
+
+#ifdef USE_PCM_FEEDBACK
 		ret = pcm_write(pcm, outBuffer, size);
 		if (ret) {
 			fprintf(stderr, "%s: failed to pcm_write\n", __func__);
 			break;
 		}
+#endif
 		manager->putDoneBuffer(inBuffer);
 	}
 
 	free(outBuffer);
+#ifdef USE_PCM_FEEDBACK
 	pcm_close(pcm);
 	pvo_deinit_bss();
+#endif
 
 	return NULL;
 }
