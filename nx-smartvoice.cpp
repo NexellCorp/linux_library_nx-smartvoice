@@ -78,26 +78,35 @@ public:
 	BufferManager();
 	virtual ~BufferManager();
 
-	void Init(int pcmBufSize, int refBufSize);
+	void Init(int pcmBufSize, int refBufSize, int outBufSize);
 	DataBuffer *getPcmBuffer();
 	void putPcmBuffer(DataBuffer *b);
 	DataBuffer *getRefBuffer();
 	void putRefBuffer(DataBuffer *b);
 	DoneBuffer *getDoneBuffer();
 	void putDoneBuffer(DoneBuffer *b);
+	DataBuffer *getOutBuffer();
+	void putOutBuffer(DataBuffer *b);
+	DataBuffer *getDoneOutBuffer();
+	void putDoneOutBuffer(DataBuffer *b);
 	void printQStatus();
 
 private:
 	int PcmBufSize;
 	int RefBufSize;
+	int OutBufSize;
 
 	NXQueue<DataBuffer *> PcmFreeQ;
 	NXQueue<DataBuffer *> PcmDoneQ;
 	NXQueue<DataBuffer *> RefFreeQ;
 	NXQueue<DataBuffer *> RefDoneQ;
+	NXQueue<DataBuffer *> OutFreeQ;
+	NXQueue<DataBuffer *> OutDoneQ;
 
 	pthread_mutex_t Mutex;
 	pthread_cond_t Cond;
+	pthread_mutex_t OutMutex;
+	pthread_cond_t OutCond;
 };
 
 void BufferManager::printQStatus()
@@ -106,12 +115,16 @@ void BufferManager::printQStatus()
 	printf("PcmDoneQ: %d\n", PcmDoneQ.size());
 	printf("RefFreeQ: %d\n", RefFreeQ.size());
 	printf("RefDoneQ: %d\n", RefDoneQ.size());
+	printf("OutFreeQ: %d\n", OutFreeQ.size());
+	printf("OutDoneQ: %d\n", OutDoneQ.size());
 }
 
 BufferManager::BufferManager()
 {
 	pthread_mutex_init(&Mutex, NULL);
 	pthread_cond_init(&Cond, NULL);
+	pthread_mutex_init(&OutMutex, NULL);
+	pthread_cond_init(&OutCond, NULL);
 }
 
 BufferManager::~BufferManager()
@@ -121,10 +134,11 @@ BufferManager::~BufferManager()
 
 //#define BUFFER_COUNT	16
 #define BUFFER_COUNT	64
-void BufferManager::Init(int pcmBufSize, int refBufSize)
+void BufferManager::Init(int pcmBufSize, int refBufSize, int outBufSize = 0)
 {
 	PcmBufSize = pcmBufSize;
 	RefBufSize = refBufSize;
+	OutBufSize = outBufSize;
 
 	/* allocate pcmbuffer */
 	for (int i = 0; i < BUFFER_COUNT; i++) {
@@ -140,6 +154,16 @@ void BufferManager::Init(int pcmBufSize, int refBufSize)
 		b->size = RefBufSize;
 		b->buf = (char *)malloc(RefBufSize);
 		RefFreeQ.queue(b);
+	}
+
+	if (outBufSize == 0)
+		return;
+
+	for (int i = 0; i < BUFFER_COUNT; i++) {
+		DataBuffer *b = new DataBuffer();
+		b->size = OutBufSize;
+		b->buf = (char *)malloc(OutBufSize);
+		OutFreeQ.queue(b);
 	}
 }
 
@@ -197,9 +221,59 @@ void BufferManager::putDoneBuffer(DoneBuffer *b)
 	delete b;
 }
 
+DataBuffer *BufferManager::getOutBuffer()
+{
+	if (OutFreeQ.isEmpty())
+		return NULL;
+
+	tr_b("%s: OutFreeQ count %d\n", __func__, OutFreeQ.size());
+	return OutFreeQ.dequeue();
+}
+
+void BufferManager::putOutBuffer(DataBuffer *b)
+{
+	OutDoneQ.queue(b);
+	tr_b("%s: OutDoneQ count %d\n", __func__, OutDoneQ.size());
+	pthread_cond_signal(&OutCond);
+}
+
+DataBuffer *BufferManager::getDoneOutBuffer()
+{
+	while (OutDoneQ.isEmpty()) {
+		pthread_cond_wait(&OutCond, &OutMutex);
+		pthread_mutex_unlock(&OutMutex);
+	}
+
+	return OutDoneQ.dequeue();
+}
+
+void BufferManager::putDoneOutBuffer(DataBuffer *b)
+{
+	OutFreeQ.queue(b);
+}
+
 }
 
 using namespace android;
+
+#define USE_PCM_FEEDBACK
+
+static void print_thread_info(const char *name, struct pcm_config *c,
+							  int unit_size)
+{
+	printf("==================================\n");
+	printf("start thread %s\n", name);
+	if (c) {
+		printf("pcm config info\n");
+		printf("channel: %d\n", c->channels);
+		printf("rate: %d\n", c->rate);
+		printf("period size: %d\n", c->period_size);
+		printf("period count: %d\n", c->period_count);
+	}
+	printf("unit size: %d\n", unit_size);
+	printf("==================================\n");
+	printf("\n");
+}
 
 static void *thread_pdm(void *arg)
 {
@@ -211,7 +285,6 @@ static void *thread_pdm(void *arg)
 	pdm_Init(&pdm_st);
 
 	memset(&config, 0, sizeof(config));
-	/* TODO */
 	config.channels = 4;
 	config.rate = 64000;
 	config.period_size = 512;
@@ -221,6 +294,8 @@ static void *thread_pdm(void *arg)
 	config.stop_threshold = 0;
 	config.silence_threshold = 0;
 
+	print_thread_info("pdm", &config, 8192);
+
 	pcm = pcm_open(0, 2, PCM_IN, &config);
 	if (!pcm || !pcm_is_ready(pcm)) {
 		fprintf(stderr, "%s: unable_to open PCM device(%s)\n",
@@ -228,11 +303,7 @@ static void *thread_pdm(void *arg)
 		return NULL;
 	}
 
-	int size = pcm_frames_to_bytes(pcm, pcm_get_buffer_size(pcm));
-	printf("%s: buffer size %d\n", __func__, size);
-	printf("%s: pcm_get_buffer_size %d\n", __func__, pcm_get_buffer_size(pcm));
-
-	size = 8192;
+	int size = 8192;
 	char *buffer = (char *)malloc(size);
 	DataBuffer *outBuffer = NULL;
 
@@ -261,13 +332,15 @@ static void *thread_pdm(void *arg)
 			break;
 		}
 
-		// TODO
 		pdm_Run(&pdm_st, (short int*)outBuffer->buf, (int *)buffer, 0);
 		manager->putPcmBuffer(outBuffer);
 	}
 
 	free(buffer);
 	pcm_close(pcm);
+
+	printf("Exit %s\n", __func__);
+
 	return NULL;
 }
 
@@ -275,14 +348,12 @@ static void *thread_ref(void *arg)
 {
 	BufferManager *manager = (BufferManager *)arg;
 
-	// TODO
 	struct ReSampleContext *rctx = audio_resample_init(2, 2, 16000, 48000);
 
 	struct pcm_config config;
 	struct pcm *pcm;
 
 	memset(&config, 0, sizeof(config));
-	/* TODO */
 	config.channels = 2;
 	config.rate = 48000;
 	config.period_size = 1024;
@@ -292,6 +363,8 @@ static void *thread_ref(void *arg)
 	config.stop_threshold = 0;
 	config.silence_threshold = 0;
 
+	print_thread_info("reference", &config, 3072);
+
 	pcm = pcm_open(0, 1, PCM_IN, &config);
 	if (!pcm || !pcm_is_ready(pcm)) {
 		fprintf(stderr, "%s: unable_to open PCM device(%s)\n",
@@ -299,11 +372,7 @@ static void *thread_ref(void *arg)
 		return NULL;
 	}
 
-	int size = pcm_frames_to_bytes(pcm, pcm_get_buffer_size(pcm));
-	printf("%s: buffer size %d\n", __func__, size);
-	printf("%s: pcm_get_buffer_size %d\n", __func__, pcm_get_buffer_size(pcm));
-
-	size = 3072;
+	int size = 3072;
 	char *buffer = (char *)malloc(size);
 	DataBuffer *outBuffer = NULL;
 
@@ -330,22 +399,92 @@ static void *thread_ref(void *arg)
 	pcm_close(pcm);
 	audio_resample_close(rctx);
 
+	printf("Exit %s\n", __func__);
+
 	return NULL;
 }
 
-// #define USE_PCM_FEEDBACK
-static void *thread_feedback(void *arg)
+static void *thread_ecnr(void *arg)
 {
 	BufferManager *manager = (BufferManager *)arg;
 
 	pvo_init();
 
+	int size = 512;
+	char *tmpBuffer = (char *)malloc(size);
+	DoneBuffer *inBuffer = NULL;
+
+	print_thread_info("ecnr", NULL, size);
+
 #ifdef USE_PCM_FEEDBACK
+	DataBuffer *outBuffer;
+#endif
+
+	int ret;
+	while (1) {
+		inBuffer = manager->getDoneBuffer();
+#ifdef USE_PCM_FEEDBACK
+		outBuffer = manager->getOutBuffer();
+		if (!outBuffer)
+			fprintf(stderr, "%s: overrun outBuffer!!!\n", __func__);
+#endif
+
+#ifdef USE_PCM_FEEDBACK
+		if (outBuffer != NULL)
+			ret = pvo_process((short *)inBuffer->pcmBuffer->buf,
+							  (short *)outBuffer->buf,
+							  (short *)inBuffer->refBuffer->buf);
+		else
+			ret = pvo_process((short *)inBuffer->pcmBuffer->buf,
+							  (short *)tmpBuffer,
+							  (short *)inBuffer->refBuffer->buf);
+#else
+		ret = pvo_process((short *)inBuffer->pcmBuffer->buf,
+				  (short *)tmpBuffer,
+				  (short *)inBuffer->refBuffer->buf);
+#endif
+		if (ret) {
+			fprintf(stderr, "%s: failed to pvo_process(ret: %d)\n",
+				__func__, ret);
+			break;
+		}
+
+#ifdef USE_PCM_FEEDBACK
+		if (outBuffer != NULL)
+			ret = PoVoGateSource(256, (short *)outBuffer->buf);
+		else
+			ret = PoVoGateSource(256, (short *)tmpBuffer);
+#else
+		ret = PoVoGateSource(256, (short *)tmpBuffer);
+#endif
+		if (ret)
+			fprintf(stderr, "%s: failed to PoVoGateSource(ret: %d)\n",
+				__func__, ret);
+
+		manager->putDoneBuffer(inBuffer);
+
+#ifdef USE_PCM_FEEDBACK
+		if (outBuffer != NULL)
+			manager->putOutBuffer(outBuffer);
+#endif
+	}
+
+	free(tmpBuffer);
+
+	printf("Exit %s\n", __func__);
+
+	return NULL;
+}
+
+#ifdef USE_PCM_FEEDBACK
+static void *thread_feedback(void *arg)
+{
+	BufferManager *manager = (BufferManager *)arg;
+
 	struct pcm_config config;
 	struct pcm *pcm;
 
 	memset(&config, 0, sizeof(config));
-	/* TODO */
 	config.channels = 1;
 	config.rate = 16000;
 	config.period_size = 256;
@@ -355,6 +494,8 @@ static void *thread_feedback(void *arg)
 	config.stop_threshold = 0;
 	config.silence_threshold = 0;
 
+	print_thread_info("feedback", &config, 512);
+
 	pcm = pcm_open(0, 3, PCM_OUT, &config);
 	if (!pcm || !pcm_is_ready(pcm)) {
 		fprintf(stderr, "%s: unable_to open PCM device(%s)\n",
@@ -362,64 +503,60 @@ static void *thread_feedback(void *arg)
 		return NULL;
 	}
 
-	int size = pcm_frames_to_bytes(pcm, pcm_get_buffer_size(pcm));
-	printf("%s: buffer size %d\n", __func__, size);
-	printf("%s: pcm_get_buffer_size %d\n", __func__, pcm_get_buffer_size(pcm));
-
-	size = 512;
-#else
 	int size = 512;
-#endif
-	char *outBuffer = (char *)malloc(size);
-	DoneBuffer *inBuffer = NULL;
-
+	DataBuffer *outBuffer = NULL;
 	int ret;
+
 	while (1) {
-		inBuffer = manager->getDoneBuffer();
-
-		ret = pvo_process((short *)inBuffer->pcmBuffer->buf,
-				  (short *)outBuffer,
-				  (short *)inBuffer->refBuffer->buf);
-		if (ret) {
-			fprintf(stderr, "%s: failed to pvo_process(ret: %d)\n",
-				__func__, ret);
-			break;
-		}
-
-		ret = PoVoGateSource(256, (short *)outBuffer);
-		if (ret)
-			fprintf(stderr, "%s: failed to PoVoGateSource(ret: %d)\n",
-				__func__, ret);
-
-#ifdef USE_PCM_FEEDBACK
-		ret = pcm_write(pcm, outBuffer, size);
+		outBuffer = manager->getDoneOutBuffer();
+		ret = pcm_write(pcm, outBuffer->buf, outBuffer->size);
 		if (ret) {
 			fprintf(stderr, "%s: failed to pcm_write\n", __func__);
 			break;
 		}
-#endif
-		manager->putDoneBuffer(inBuffer);
+		manager->putDoneOutBuffer(outBuffer);
 	}
 
-	free(outBuffer);
-#ifdef USE_PCM_FEEDBACK
 	pcm_close(pcm);
-	pvo_deinit_bss();
-#endif
 
 	return NULL;
 }
+#endif
 
-int main(int argc, char *argv[])
+int main(int argc __unused, char *argv[] __unused)
 {
-	pthread_t tid[3];
+	pthread_t tid[4];
 	BufferManager *bufManager = new BufferManager();
 
+#ifdef USE_PCM_FEEDBACK
+	bufManager->Init(2048, 1024, 512);
+#else
 	bufManager->Init(2048, 1024);
+#endif
 
-	pthread_create(&tid[1], NULL, thread_ref, (void *)bufManager);
-	pthread_create(&tid[2], NULL, thread_feedback, (void *)bufManager);
-	pthread_create(&tid[0], NULL, thread_pdm, (void *)bufManager);
+	pthread_attr_t sched_attr;
+	int fifo_max_prio;
+	struct sched_param sched_param;
+
+	pthread_attr_init(&sched_attr);
+	pthread_attr_setschedpolicy(&sched_attr, SCHED_FIFO);
+	fifo_max_prio = sched_get_priority_max(SCHED_FIFO);
+
+	/* thread_ref, thread_pdm priority is max - 1 */
+	sched_param.sched_priority = fifo_max_prio - 1;
+	pthread_attr_setschedparam(&sched_attr, &sched_param);
+
+	pthread_create(&tid[0], &sched_attr, thread_ref, (void *)bufManager);
+	pthread_create(&tid[2], &sched_attr, thread_pdm, (void *)bufManager);
+
+	/* thread_ecnr, thread_feedback priority is max */
+	sched_param.sched_priority = fifo_max_prio;
+	pthread_attr_setschedparam(&sched_attr, &sched_param);
+
+	pthread_create(&tid[1], &sched_attr, thread_ecnr, (void *)bufManager);
+#ifdef USE_PCM_FEEDBACK
+	pthread_create(&tid[4], &sched_attr, thread_feedback, (void *)bufManager);
+#endif
 
 	while(1);
 	// delete bufManager;
