@@ -30,7 +30,7 @@ LOCAL_C_INCLUDES += \
 LOCAL_SHARED_LIBRARIES := \
 	libcutils \
 	libutils \
-	libpowervoice
+	libpvo
 
 LOCAL_LDFLAGS += \
 	-L$(LOCAL_PATH)/../../library/libagcpdm	\

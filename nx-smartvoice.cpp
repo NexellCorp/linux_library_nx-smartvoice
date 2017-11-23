@@ -9,7 +9,7 @@
 
 #include "nx_pdm.h"
 #include "resample.h"
-#include "pvo_wrapper.h"
+#include "pvpre.h"
 
 namespace android {
 
@@ -348,7 +348,7 @@ static void *thread_ref(void *arg)
 {
 	BufferManager *manager = (BufferManager *)arg;
 
-	struct ReSampleContext *rctx = audio_resample_init(2, 2, 16000, 48000);
+	struct ReSampleContext *rctx = audio_resample_init(1, 2, 16000, 48000);
 
 	struct pcm_config config;
 	struct pcm *pcm;
@@ -408,7 +408,7 @@ static void *thread_ecnr(void *arg)
 {
 	BufferManager *manager = (BufferManager *)arg;
 
-	pvo_init();
+	PVPRE_Init();
 
 	int size = 512;
 	char *tmpBuffer = (char *)malloc(size);
@@ -431,35 +431,30 @@ static void *thread_ecnr(void *arg)
 
 #ifdef USE_PCM_FEEDBACK
 		if (outBuffer != NULL)
-			ret = pvo_process((short *)inBuffer->pcmBuffer->buf,
-							  (short *)outBuffer->buf,
-							  (short *)inBuffer->refBuffer->buf);
+			ret = PVPRE_Process_4ch((short *)inBuffer->pcmBuffer->buf,
+									(short *)inBuffer->refBuffer->buf,
+									(short *)outBuffer->buf,
+									1);
 		else
-			ret = pvo_process((short *)inBuffer->pcmBuffer->buf,
-							  (short *)tmpBuffer,
-							  (short *)inBuffer->refBuffer->buf);
+			ret = PVPRE_Process_4ch((short *)inBuffer->pcmBuffer->buf,
+									(short *)inBuffer->refBuffer->buf,
+									(short *)tmpBuffer,
+									1);
 #else
-		ret = pvo_process((short *)inBuffer->pcmBuffer->buf,
-				  (short *)tmpBuffer,
-				  (short *)inBuffer->refBuffer->buf);
+		ret = PVPRE_Process_4ch((short *)inBuffer->pcmBuffer->buf,
+								(short *)inBuffer->refBuffer->buf,
+								(short *)tmpBuffer,
+								1);
 #endif
-		if (ret) {
-			fprintf(stderr, "%s: failed to pvo_process(ret: %d)\n",
-				__func__, ret);
-			break;
-		}
+		if (ret == 1)
+			printf("Detect Keyword\n");
 
-#ifdef USE_PCM_FEEDBACK
-		if (outBuffer != NULL)
-			ret = PoVoGateSource(256, (short *)outBuffer->buf);
-		else
-			ret = PoVoGateSource(256, (short *)tmpBuffer);
-#else
+#ifndef USE_PCM_FEEDBACK
 		ret = PoVoGateSource(256, (short *)tmpBuffer);
-#endif
 		if (ret)
 			fprintf(stderr, "%s: failed to PoVoGateSource(ret: %d)\n",
 				__func__, ret);
+#endif
 
 		manager->putDoneBuffer(inBuffer);
 
@@ -470,6 +465,8 @@ static void *thread_ecnr(void *arg)
 	}
 
 	free(tmpBuffer);
+
+	PVPRE_Close();
 
 	printf("Exit %s\n", __func__);
 
@@ -529,9 +526,15 @@ int main(int argc __unused, char *argv[] __unused)
 	BufferManager *bufManager = new BufferManager();
 
 #ifdef USE_PCM_FEEDBACK
-	bufManager->Init(2048, 1024, 512);
+	// resample 2ch
+	// bufManager->Init(2048, 1024, 512);
+	// resample 1ch
+	bufManager->Init(2048, 512, 512);
 #else
-	bufManager->Init(2048, 1024);
+	// resample 2ch
+	// bufManager->Init(2048, 1024);
+	// resample 1ch
+	bufManager->Init(2048, 512);
 #endif
 
 	pthread_attr_t sched_attr;
