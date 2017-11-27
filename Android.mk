@@ -13,27 +13,33 @@
 # limitations under the License.
 #
 LOCAL_PATH := $(call my-dir)
+
+# libnxvoice
 include $(CLEAR_VARS)
-
-LOCAL_MODULE := test-nx-voice
-
+LOCAL_MODULE :=libnxvoice
 LOCAL_SRC_FILES := \
 	buffermanager.cpp \
-	nx-smartvoice.cpp \
-	test-pvo.cpp
-
+	nx-smartvoice.cpp
 LOCAL_C_INCLUDES += \
-	external/tinyalsa/include		\
-	$(LOCAL_PATH)/../../library/libagcpdm	\
-	$(LOCAL_PATH)/../../library/libresample \
-	$(LOCAL_PATH)/../../library/libpowervoice
-
+	external/tinyalsa/include \
+	$(LOCAL_PATH)/../../library/libagcpdm \
+	$(LOCAL_PATH)/../../library/libresample
 LOCAL_SHARED_LIBRARIES += \
-	libpvo \
 	libtinyalsa
-
 LOCAL_STATIC_LIBRARIES += \
 	libagcpdm \
 	libresample
+include $(BUILD_SHARED_LIBRARY)
 
+# test-pvo
+include $(CLEAR_VARS)
+LOCAL_MODULE := test-pvo
+LOCAL_SRC_FILES := \
+	buffermanager.cpp \
+	test-pvo.cpp
+LOCAL_C_INCLUDES += \
+	$(LOCAL_PATH)/../../library/libpowervoice
+LOCAL_SHARED_LIBRARIES += \
+	libpvo \
+	libnxvoice
 include $(BUILD_EXECUTABLE)
