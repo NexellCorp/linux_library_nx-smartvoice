@@ -236,16 +236,12 @@ static void *thread_ref(void *arg)
 	pthread_exit(NULL);
 }
 
-short testBuffer[256] = {0, };
 static void *thread_ecnr(void *arg)
 {
 	struct nx_voice_context *ctx = (struct nx_voice_context *)arg;
 	BufferManager *manager = ctx->bufManager;
 	bool useFeedback = ctx->config.use_feedback;
 	struct ecnr_callback *cb = &ctx->config.cb;
-
-	for (int i = 0; i < 256; i++)
-		testBuffer[i] = i + 1;
 
 	if (cb->init)
 		cb->init();
