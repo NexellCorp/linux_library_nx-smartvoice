@@ -17,30 +17,23 @@ include $(CLEAR_VARS)
 
 LOCAL_MODULE := test-nx-voice
 
-LOCAL_SRC_FILES := nx-smartvoice.cpp
+LOCAL_SRC_FILES := \
+	buffermanager.cpp \
+	nx-smartvoice.cpp \
+	test-pvo.cpp
 
 LOCAL_C_INCLUDES += \
-	frameworks/native/include		\
-	system/core/include			\
 	external/tinyalsa/include		\
 	$(LOCAL_PATH)/../../library/libagcpdm	\
 	$(LOCAL_PATH)/../../library/libresample \
 	$(LOCAL_PATH)/../../library/libpowervoice
 
-LOCAL_SHARED_LIBRARIES := \
-	libcutils \
-	libutils \
-	libpvo
-
-LOCAL_LDFLAGS += \
-	-L$(LOCAL_PATH)/../../library/libagcpdm	\
-	-lagcpdm \
-
 LOCAL_SHARED_LIBRARIES += \
-	libtinyalsa \
-	libpowervoice
+	libpvo \
+	libtinyalsa
 
 LOCAL_STATIC_LIBRARIES += \
+	libagcpdm \
 	libresample
 
 include $(BUILD_EXECUTABLE)

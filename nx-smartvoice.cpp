@@ -1,262 +1,82 @@
+/*
+ * Copyright (C) 2017  Nexell Co., Ltd.
+ * Author: Sungwoo, Park <swpark@nexell.co.kr>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+/* vim: set ts=4, set sw=4 */
 #include <stdio.h>
 #include <pthread.h>
 #include <stdlib.h>
-
-#include <queue>
-#include <utils/Mutex.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <sys/types.h>
 
 #include <tinyalsa/asoundlib.h>
 
 #include "nx_pdm.h"
 #include "resample.h"
-#include "pvpre.h"
-
-namespace android {
-
-//#define TRACE_BUFFER
-#ifdef TRACE_BUFFER
-#define tr_b(a...) printf(a)
-#else
-#define tr_b(a...)
-#endif
-
-template <class T>
-class NXQueue
-{
-public:
-    NXQueue() {
-    };
-
-    virtual ~NXQueue() {
-    }
-
-    void queue(const T& item) {
-		Mutex::Autolock l(mLock);
-		q.push(item);
-    }
-
-    const T& dequeue() {
-		Mutex::Autolock l(mLock);
-        const T& item = q.front();
-        q.pop();
-        return item;
-    }
-
-    bool isEmpty() {
-		Mutex::Autolock l(mLock);
-        return q.empty();
-    }
-
-    size_t size() {
-		Mutex::Autolock l(mLock);
-        return q.size();
-    }
-
-    const T& getHead() {
-		Mutex::Autolock l(mLock);
-        return q.front();
-    }
-
-private:
-	std::queue<T> q;
-	Mutex mLock;
-};
-
-struct DataBuffer {
-	int size;
-	char *buf;
-};
-
-struct DoneBuffer {
-	DataBuffer *pcmBuffer;
-	DataBuffer *refBuffer;
-};
-
-class BufferManager
-{
-public:
-	BufferManager();
-	virtual ~BufferManager();
-
-	void Init(int pcmBufSize, int refBufSize, int outBufSize);
-	DataBuffer *getPcmBuffer();
-	void putPcmBuffer(DataBuffer *b);
-	DataBuffer *getRefBuffer();
-	void putRefBuffer(DataBuffer *b);
-	DoneBuffer *getDoneBuffer();
-	void putDoneBuffer(DoneBuffer *b);
-	DataBuffer *getOutBuffer();
-	void putOutBuffer(DataBuffer *b);
-	DataBuffer *getDoneOutBuffer();
-	void putDoneOutBuffer(DataBuffer *b);
-	void printQStatus();
-
-private:
-	int PcmBufSize;
-	int RefBufSize;
-	int OutBufSize;
-
-	NXQueue<DataBuffer *> PcmFreeQ;
-	NXQueue<DataBuffer *> PcmDoneQ;
-	NXQueue<DataBuffer *> RefFreeQ;
-	NXQueue<DataBuffer *> RefDoneQ;
-	NXQueue<DataBuffer *> OutFreeQ;
-	NXQueue<DataBuffer *> OutDoneQ;
-
-	pthread_mutex_t Mutex;
-	pthread_cond_t Cond;
-	pthread_mutex_t OutMutex;
-	pthread_cond_t OutCond;
-};
-
-void BufferManager::printQStatus()
-{
-	printf("PcmFreeQ: %d\n", PcmFreeQ.size());
-	printf("PcmDoneQ: %d\n", PcmDoneQ.size());
-	printf("RefFreeQ: %d\n", RefFreeQ.size());
-	printf("RefDoneQ: %d\n", RefDoneQ.size());
-	printf("OutFreeQ: %d\n", OutFreeQ.size());
-	printf("OutDoneQ: %d\n", OutDoneQ.size());
-}
-
-BufferManager::BufferManager()
-{
-	pthread_mutex_init(&Mutex, NULL);
-	pthread_cond_init(&Cond, NULL);
-	pthread_mutex_init(&OutMutex, NULL);
-	pthread_cond_init(&OutCond, NULL);
-}
-
-BufferManager::~BufferManager()
-{
-	// TODO: free buffers
-}
-
-//#define BUFFER_COUNT	16
-#define BUFFER_COUNT	64
-void BufferManager::Init(int pcmBufSize, int refBufSize, int outBufSize = 0)
-{
-	PcmBufSize = pcmBufSize;
-	RefBufSize = refBufSize;
-	OutBufSize = outBufSize;
-
-	/* allocate pcmbuffer */
-	for (int i = 0; i < BUFFER_COUNT; i++) {
-		DataBuffer *b = new DataBuffer();
-		b->size = PcmBufSize;
-		b->buf = (char *)malloc(PcmBufSize);
-		PcmFreeQ.queue(b);
-	}
-
-	/* allocate refbuffer */
-	for (int i = 0; i < BUFFER_COUNT; i++) {
-		DataBuffer *b = new DataBuffer();
-		b->size = RefBufSize;
-		b->buf = (char *)malloc(RefBufSize);
-		RefFreeQ.queue(b);
-	}
-
-	if (outBufSize == 0)
-		return;
-
-	for (int i = 0; i < BUFFER_COUNT; i++) {
-		DataBuffer *b = new DataBuffer();
-		b->size = OutBufSize;
-		b->buf = (char *)malloc(OutBufSize);
-		OutFreeQ.queue(b);
-	}
-}
-
-DataBuffer *BufferManager::getPcmBuffer()
-{
-	if (PcmFreeQ.isEmpty())
-		return NULL;
-
-	tr_b("%s: PcmFreeQ count %d\n", __func__, PcmFreeQ.size());
-	return PcmFreeQ.dequeue();
-}
-
-void BufferManager::putPcmBuffer(DataBuffer *b)
-{
-	PcmDoneQ.queue(b);
-	tr_b("%s: PcmDoneQ count %d\n", __func__, PcmDoneQ.size());
-	pthread_cond_signal(&Cond);
-}
-
-DataBuffer *BufferManager::getRefBuffer()
-{
-	if (RefFreeQ.isEmpty())
-		return NULL;
-
-	tr_b("%s: RefFreeQ count %d\n", __func__, RefFreeQ.size());
-	return RefFreeQ.dequeue();
-}
-
-void BufferManager::putRefBuffer(DataBuffer *b)
-{
-	RefDoneQ.queue(b);
-	tr_b("%s: RefDoneQ count %d\n", __func__, RefDoneQ.size());
-	pthread_cond_signal(&Cond);
-}
-
-DoneBuffer *BufferManager::getDoneBuffer()
-{
-	DoneBuffer *b = new DoneBuffer();
-
-	while (PcmDoneQ.isEmpty() || RefDoneQ.isEmpty()) {
-		pthread_cond_wait(&Cond, &Mutex);
-		pthread_mutex_unlock(&Mutex);
-	}
-
-	b->pcmBuffer = PcmDoneQ.dequeue();
-	b->refBuffer = RefDoneQ.dequeue();
-
-	return b;
-}
-
-void BufferManager::putDoneBuffer(DoneBuffer *b)
-{
-	PcmFreeQ.queue(b->pcmBuffer);
-	RefFreeQ.queue(b->refBuffer);
-	delete b;
-}
-
-DataBuffer *BufferManager::getOutBuffer()
-{
-	if (OutFreeQ.isEmpty())
-		return NULL;
-
-	tr_b("%s: OutFreeQ count %d\n", __func__, OutFreeQ.size());
-	return OutFreeQ.dequeue();
-}
-
-void BufferManager::putOutBuffer(DataBuffer *b)
-{
-	OutDoneQ.queue(b);
-	tr_b("%s: OutDoneQ count %d\n", __func__, OutDoneQ.size());
-	pthread_cond_signal(&OutCond);
-}
-
-DataBuffer *BufferManager::getDoneOutBuffer()
-{
-	while (OutDoneQ.isEmpty()) {
-		pthread_cond_wait(&OutCond, &OutMutex);
-		pthread_mutex_unlock(&OutMutex);
-	}
-
-	return OutDoneQ.dequeue();
-}
-
-void BufferManager::putDoneOutBuffer(DataBuffer *b)
-{
-	OutFreeQ.queue(b);
-}
-
-}
-
-using namespace android;
+// #include "pvpre.h"
+#include "buffermanager.h"
+#include "nx-smartvoice.h"
 
 #define USE_PCM_FEEDBACK
+
+#define BASE_INTERVAL_US		16000
+#define SEC_TO_US(s)			(s*1000*1000)
+#define MAX_THREAD_NUMBER		5
+#define OUT_RATE				16000
+
+#define PDM_RATE				64000
+#define PDM_PERIOD_SIZE			512
+#define PDM_PERIOD_COUNT		16
+#define PDM_BITS				16
+
+#define REF_RATE				48000
+#define REF_PERIOD_SIZE			1024
+#define REF_PERIOD_COUNT		16
+#define REF_BITS				16
+
+#define FEEDBACK_RATE			OUT_RATE
+#define FEEDBACK_PERIOD_SIZE	256
+#define FEEDBACK_PERIOD_COUNT	16
+#define FEEDBACK_BITS			16
+
+struct nx_voice_context {
+	pthread_t tid[MAX_THREAD_NUMBER];
+	BufferManager *bufManager;
+	bool stop;
+	struct nx_smartvoice_config config;
+	int pdmUnitSize;
+	int refUnitSize;
+	int feedbackUnitSize;
+	int pdmOutSize;
+	int refOutSize;
+
+	int pipe[2];
+	bool clientWait;
+
+	bool pdmExit;
+	bool pdmExited;
+	bool refExit;
+	bool refExited;
+	bool ecnrExit;
+	bool ecnrExited;
+	bool feedbackExit;
+	bool feedbackExited;
+};
 
 static void print_thread_info(const char *name, struct pcm_config *c,
 							  int unit_size)
@@ -275,9 +95,15 @@ static void print_thread_info(const char *name, struct pcm_config *c,
 	printf("\n");
 }
 
+static int calcUnitSize(long interval_us, long rate, int bits, int channel_num)
+{
+	return ((interval_us * rate) / SEC_TO_US(1)) * (bits / 8) * channel_num;
+}
+
 static void *thread_pdm(void *arg)
 {
-	BufferManager *manager = (BufferManager *)arg;
+	struct nx_voice_context *ctx = (struct nx_voice_context *)arg;
+	BufferManager *manager = ctx->bufManager;
 
 	struct pcm_config config;
 	struct pcm *pcm;
@@ -285,41 +111,42 @@ static void *thread_pdm(void *arg)
 	pdm_Init(&pdm_st);
 
 	memset(&config, 0, sizeof(config));
-	config.channels = 4;
-	config.rate = 64000;
-	config.period_size = 512;
-	config.period_count = 16;
+	config.channels = ctx->config.pdm_chnum;
+	config.rate = PDM_RATE;
+	config.period_size = PDM_PERIOD_SIZE;
+	config.period_count = PDM_PERIOD_COUNT;
 	config.format = PCM_FORMAT_S16_LE;
 	config.start_threshold = 0;
 	config.stop_threshold = 0;
 	config.silence_threshold = 0;
 
-	print_thread_info("pdm", &config, 8192);
+	int unit_size = ctx->pdmUnitSize;
+	print_thread_info("pdm", &config, unit_size);
 
-	pcm = pcm_open(0, 2, PCM_IN, &config);
+	pcm = pcm_open(0, ctx->config.pdm_devnum, PCM_IN, &config);
 	if (!pcm || !pcm_is_ready(pcm)) {
 		fprintf(stderr, "%s: unable_to open PCM device(%s)\n",
-			__func__, pcm_get_error(pcm));
+				__func__, pcm_get_error(pcm));
 		return NULL;
 	}
 
-	int size = 8192;
-	char *buffer = (char *)malloc(size);
+	char *buffer = (char *)malloc(unit_size);
 	DataBuffer *outBuffer = NULL;
 
 	int ret;
 
-	if (0 != pdm_SetParam(&pdm_st, PDM_PARAM_GAIN, 0))
-		printf("failed: pdm gain parameter [%d]", 0);
+	if (0 != pdm_SetParam(&pdm_st, PDM_PARAM_GAIN, ctx->config.pdm_gain))
+		fprintf(stderr, "failed: pdm gain parameter [%d]",
+				ctx->config.pdm_gain);
 
-	while (1) {
-		ret = pcm_read(pcm, buffer, size/2);
+	while (!ctx->pdmExit) {
+		ret = pcm_read(pcm, buffer, unit_size/2);
 		if (ret) {
 			fprintf(stderr, "%s: failed to pcm_read\n", __func__);
 			break;
 		}
 
-		ret = pcm_read(pcm, buffer + size/2, size/2);
+		ret = pcm_read(pcm, buffer + unit_size/2, unit_size/2);
 		if (ret) {
 			fprintf(stderr, "%s: failed to pcm_read\n", __func__);
 			break;
@@ -341,43 +168,47 @@ static void *thread_pdm(void *arg)
 
 	printf("Exit %s\n", __func__);
 
-	return NULL;
+	ctx->pdmExited = true;
+	pthread_exit(NULL);
 }
 
 static void *thread_ref(void *arg)
 {
-	BufferManager *manager = (BufferManager *)arg;
+	struct nx_voice_context *ctx = (struct nx_voice_context *)arg;
+	BufferManager *manager = ctx->bufManager;
 
-	struct ReSampleContext *rctx = audio_resample_init(1, 2, 16000, 48000);
+	struct ReSampleContext *rctx =
+		audio_resample_init(ctx->config.ref_resample_out_chnum, 2, OUT_RATE,
+							REF_RATE);
 
 	struct pcm_config config;
 	struct pcm *pcm;
 
 	memset(&config, 0, sizeof(config));
 	config.channels = 2;
-	config.rate = 48000;
-	config.period_size = 1024;
-	config.period_count = 16;
+	config.rate = REF_RATE;
+	config.period_size = REF_PERIOD_SIZE;
+	config.period_count = REF_PERIOD_COUNT;
 	config.format = PCM_FORMAT_S16_LE;
 	config.start_threshold = 0;
 	config.stop_threshold = 0;
 	config.silence_threshold = 0;
 
-	print_thread_info("reference", &config, 3072);
+	print_thread_info("reference", &config, ctx->refUnitSize);
 
-	pcm = pcm_open(0, 1, PCM_IN, &config);
+	pcm = pcm_open(0, ctx->config.ref_devnum, PCM_IN, &config);
 	if (!pcm || !pcm_is_ready(pcm)) {
 		fprintf(stderr, "%s: unable_to open PCM device(%s)\n",
 			__func__, pcm_get_error(pcm));
 		return NULL;
 	}
 
-	int size = 3072;
+	int size = ctx->refUnitSize;
 	char *buffer = (char *)malloc(size);
 	DataBuffer *outBuffer = NULL;
 
 	int ret;
-	while (1) {
+	while (!ctx->refExit) {
 		ret = pcm_read(pcm, buffer, size);
 		if (ret) {
 			fprintf(stderr, "%s: failed to pcm_read\n", __func__);
@@ -400,111 +231,133 @@ static void *thread_ref(void *arg)
 	audio_resample_close(rctx);
 
 	printf("Exit %s\n", __func__);
+	ctx->refExited = true;
 
-	return NULL;
+	pthread_exit(NULL);
 }
 
+short testBuffer[256] = {0, };
 static void *thread_ecnr(void *arg)
 {
-	BufferManager *manager = (BufferManager *)arg;
+	struct nx_voice_context *ctx = (struct nx_voice_context *)arg;
+	BufferManager *manager = ctx->bufManager;
+	bool useFeedback = ctx->config.use_feedback;
+	struct ecnr_callback *cb = &ctx->config.cb;
 
-	PVPRE_Init();
+	for (int i = 0; i < 256; i++)
+		testBuffer[i] = i + 1;
 
-	int size = 512;
+	if (cb->init)
+		cb->init();
+
+	if (!cb->process) {
+		fprintf(stderr, "ECNR callback process is NULL!!!\n");
+		return NULL;
+	}
+
+	/* feedback unit size is same to ecnr out size */
+	int size = ctx->feedbackUnitSize;
 	char *tmpBuffer = (char *)malloc(size);
 	DoneBuffer *inBuffer = NULL;
 
 	print_thread_info("ecnr", NULL, size);
 
-#ifdef USE_PCM_FEEDBACK
-	DataBuffer *outBuffer;
-#endif
+	DataBuffer *outBuffer = NULL;
 
 	int ret;
-	while (1) {
+	while (!ctx->ecnrExit) {
 		inBuffer = manager->getDoneBuffer();
-#ifdef USE_PCM_FEEDBACK
-		outBuffer = manager->getOutBuffer();
-		if (!outBuffer)
-			fprintf(stderr, "%s: overrun outBuffer!!!\n", __func__);
-#endif
 
-#ifdef USE_PCM_FEEDBACK
-		if (outBuffer != NULL)
-			ret = PVPRE_Process_4ch((short *)inBuffer->pcmBuffer->buf,
-									(short *)inBuffer->refBuffer->buf,
-									(short *)outBuffer->buf,
-									1);
-		else
-			ret = PVPRE_Process_4ch((short *)inBuffer->pcmBuffer->buf,
-									(short *)inBuffer->refBuffer->buf,
-									(short *)tmpBuffer,
-									1);
-#else
-		ret = PVPRE_Process_4ch((short *)inBuffer->pcmBuffer->buf,
-								(short *)inBuffer->refBuffer->buf,
-								(short *)tmpBuffer,
-								1);
-#endif
-		if (ret == 1)
+		if (useFeedback) {
+			outBuffer = manager->getOutBuffer();
+
+			if (outBuffer != NULL) {
+				ret = cb->process((short *)inBuffer->pcmBuffer->buf,
+								  (short *)inBuffer->refBuffer->buf,
+								  (short *)outBuffer->buf,
+								  1);
+			} else {
+				fprintf(stderr, "%s: overrun outBuffer!!!\n", __func__);
+				ret = cb->process((short *)inBuffer->pcmBuffer->buf,
+								  (short *)inBuffer->refBuffer->buf,
+								  (short *)tmpBuffer,
+								  1);
+			}
+		} else {
+			ret = cb->process((short *)inBuffer->pcmBuffer->buf,
+							  (short *)inBuffer->refBuffer->buf,
+							  (short *)tmpBuffer,
+							  1);
+		}
+
+		if (ctx->config.check_trigger &&
+			ret == ctx->config.trigger_done_ret_value)
 			printf("Detect Keyword\n");
 
-#ifndef USE_PCM_FEEDBACK
-		ret = PoVoGateSource(256, (short *)tmpBuffer);
-		if (ret)
-			fprintf(stderr, "%s: failed to PoVoGateSource(ret: %d)\n",
-				__func__, ret);
-#endif
+		if (!useFeedback && cb->post_process) {
+			ret = cb->post_process(size/2, (short *)tmpBuffer);
+			if (ret)
+				fprintf(stderr, "%s: failed to post_process(ret: %d)\n",
+						__func__, ret);
+		}
 
 		manager->putDoneBuffer(inBuffer);
 
-#ifdef USE_PCM_FEEDBACK
-		if (outBuffer != NULL)
+		if (useFeedback && outBuffer != NULL) {
+			if (ctx->clientWait && ctx->pipe[1] > 0)
+				write(ctx->pipe[1], outBuffer->buf, outBuffer->size);
+
 			manager->putOutBuffer(outBuffer);
-#endif
+		} else {
+			if (ctx->clientWait && ctx->pipe[1] > 0)
+				write(ctx->pipe[1], tmpBuffer, size);
+		}
 	}
 
 	free(tmpBuffer);
 
-	PVPRE_Close();
+	if (cb->deinit)
+		cb->deinit();
 
 	printf("Exit %s\n", __func__);
+
+	ctx->ecnrExited = true;
 
 	return NULL;
 }
 
-#ifdef USE_PCM_FEEDBACK
 static void *thread_feedback(void *arg)
 {
-	BufferManager *manager = (BufferManager *)arg;
+	struct nx_voice_context *ctx = (struct nx_voice_context *)arg;
+	BufferManager *manager = ctx->bufManager;
 
 	struct pcm_config config;
 	struct pcm *pcm;
 
 	memset(&config, 0, sizeof(config));
 	config.channels = 1;
-	config.rate = 16000;
-	config.period_size = 256;
-	config.period_count = 16;
+	config.rate = FEEDBACK_RATE;
+	config.period_size = FEEDBACK_PERIOD_SIZE;
+	config.period_count = FEEDBACK_PERIOD_COUNT;
 	config.format = PCM_FORMAT_S16_LE;
 	config.start_threshold = 0;
 	config.stop_threshold = 0;
 	config.silence_threshold = 0;
 
-	print_thread_info("feedback", &config, 512);
+	print_thread_info("feedback", &config, ctx->feedbackUnitSize);
 
-	pcm = pcm_open(0, 3, PCM_OUT, &config);
+	pcm = pcm_open(0, ctx->config.feedback_devnum, PCM_OUT, &config);
 	if (!pcm || !pcm_is_ready(pcm)) {
 		fprintf(stderr, "%s: unable_to open PCM device(%s)\n",
-			__func__, pcm_get_error(pcm));
+				__func__, pcm_get_error(pcm));
 		return NULL;
 	}
 
-	int size = 512;
+	int size = ctx->feedbackUnitSize;
 	DataBuffer *outBuffer = NULL;
 	int ret;
 
-	while (1) {
+	while (!ctx->feedbackExit) {
 		outBuffer = manager->getDoneOutBuffer();
 		ret = pcm_write(pcm, outBuffer->buf, outBuffer->size);
 		if (ret) {
@@ -516,54 +369,190 @@ static void *thread_feedback(void *arg)
 
 	pcm_close(pcm);
 
+	printf("Exit %s\n", __func__);
+	ctx->feedbackExited = true;
+
 	return NULL;
 }
-#endif
 
-int main(int argc __unused, char *argv[] __unused)
+#define THREAD_IDX_PDM			0
+#define THREAD_IDX_REF			1
+#define THREAD_IDX_ECNR			2
+#define THREAD_IDX_FEEDBACK		3
+extern "C" void *nx_voice_create_handle(void)
 {
-	pthread_t tid[4];
+	struct nx_voice_context *ctx;
+
+	ctx = (struct nx_voice_context *)mmap(NULL, sizeof(*ctx),
+										  PROT_READ | PROT_WRITE,
+										  MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	if (ctx == MAP_FAILED) {
+		fprintf(stderr, "failed to create handle\n");
+		return NULL;
+	}
+	memset(ctx, 0, sizeof(*ctx));
+
+	int ret = pipe(ctx->pipe);
+	if (ret < 0) {
+		fprintf(stderr, "failed to create pipe\n");
+		return NULL;
+	}
+
+	return ctx;
+}
+
+extern "C" void nx_voice_close_handle(void *handle)
+{
+	munmap(handle, sizeof(struct nx_voice_context));
+}
+
+extern "C" int nx_voice_start(void *handle, struct nx_smartvoice_config *c)
+{
+	pthread_t tid[MAX_THREAD_NUMBER];
+	struct nx_voice_context *ctx;
+
+	ctx = (struct nx_voice_context *)handle;
+
+	printf("Start nx-voice\n");
+
 	BufferManager *bufManager = new BufferManager();
+	if(!bufManager) {
+		fprintf(stderr, "failed to alloc bufManager\n");
+		return -ENOMEM;
+	}
 
-#ifdef USE_PCM_FEEDBACK
-	// resample 2ch
-	// bufManager->Init(2048, 1024, 512);
-	// resample 1ch
-	bufManager->Init(2048, 512, 512);
-#else
-	// resample 2ch
-	// bufManager->Init(2048, 1024);
-	// resample 1ch
-	bufManager->Init(2048, 512);
+	memcpy(&ctx->config, c, sizeof(*c));
+	ctx->bufManager = bufManager;
+	ctx->pdmUnitSize = calcUnitSize(BASE_INTERVAL_US, PDM_RATE, PDM_BITS,
+									ctx->config.pdm_chnum);
+	ctx->refUnitSize = calcUnitSize(BASE_INTERVAL_US, REF_RATE, REF_BITS, 2);
+	ctx->feedbackUnitSize = calcUnitSize(BASE_INTERVAL_US, FEEDBACK_RATE,
+										 FEEDBACK_BITS, 1);
+	ctx->pdmOutSize = calcUnitSize(BASE_INTERVAL_US, OUT_RATE, PDM_BITS,
+								   ctx->config.pdm_chnum);
+	ctx->refOutSize = calcUnitSize(BASE_INTERVAL_US, OUT_RATE, REF_BITS,
+								   ctx->config.ref_resample_out_chnum);
+	ctx->stop = false;
+	ctx->pdmExit = false;
+	ctx->pdmExited = false;
+	ctx->refExit = false;
+	ctx->refExited = false;
+	ctx->ecnrExit = false;
+	ctx->ecnrExited = false;
+	ctx->feedbackExit = false;
+	ctx->feedbackExited = false;
+
+#if 0
+	printf("pdmUnitSize: %d\n", ctx->pdmUnitSize);
+	printf("refUnitSize: %d\n", ctx->refUnitSize);
+	printf("feedbackUnitSize: %d\n", ctx->feedbackUnitSize);
+	printf("pdmOutSize: %d\n", ctx->pdmOutSize);
+	printf("refOutSize: %d\n", ctx->refOutSize);
 #endif
 
-	pthread_attr_t sched_attr;
-	int fifo_max_prio;
-	struct sched_param sched_param;
+	bufManager->Init(ctx->pdmOutSize, ctx->refOutSize, ctx->feedbackUnitSize);
 
-	pthread_attr_init(&sched_attr);
-	pthread_attr_setschedpolicy(&sched_attr, SCHED_FIFO);
-	fifo_max_prio = sched_get_priority_max(SCHED_FIFO);
+	/* daemonoize */
+	pid_t pid = fork();
+	if (pid > 0) {
+		/* here is parent */
+		close(ctx->pipe[1]);
+		return pid;
+	} else {
+		/* here is child */
+		close(ctx->pipe[0]);
+		pid_t sid = setsid();
+		if (sid < 0) {
+			fprintf(stderr, "failed to setsid: ret %d\n", sid);
+			exit(EXIT_FAILURE);
+		};
 
-	/* thread_ref, thread_pdm priority is max - 1 */
-	sched_param.sched_priority = fifo_max_prio - 1;
-	pthread_attr_setschedparam(&sched_attr, &sched_param);
+		if (!ctx->config.verbose) {
+			close(STDIN_FILENO);
+			close(STDOUT_FILENO);
+			close(STDERR_FILENO);
+		}
 
-	pthread_create(&tid[0], &sched_attr, thread_ref, (void *)bufManager);
-	pthread_create(&tid[2], &sched_attr, thread_pdm, (void *)bufManager);
+		pthread_attr_t sched_attr;
+		int fifoMaxPriority;
+		struct sched_param sched_param;
 
-	/* thread_ecnr, thread_feedback priority is max */
-	sched_param.sched_priority = fifo_max_prio;
-	pthread_attr_setschedparam(&sched_attr, &sched_param);
+		pthread_attr_init(&sched_attr);
+		pthread_attr_setschedpolicy(&sched_attr, SCHED_FIFO);
+		fifoMaxPriority = sched_get_priority_max(SCHED_FIFO);
 
-	pthread_create(&tid[1], &sched_attr, thread_ecnr, (void *)bufManager);
-#ifdef USE_PCM_FEEDBACK
-	pthread_create(&tid[4], &sched_attr, thread_feedback, (void *)bufManager);
-#endif
+		/* thread_pdm, thread_ref priority is max - 1 */
+		sched_param.sched_priority = fifoMaxPriority - 1;
+		pthread_attr_setschedparam(&sched_attr, &sched_param);
 
-	while(1);
-	// delete bufManager;
+		pthread_create(&ctx->tid[THREAD_IDX_PDM], &sched_attr, thread_pdm,
+					   (void *)ctx);
+		pthread_create(&ctx->tid[THREAD_IDX_REF], &sched_attr, thread_ref,
+					   (void *)ctx);
+
+		/* thread_ecnr, thread_feedback priority is max */
+		sched_param.sched_priority = fifoMaxPriority;
+		pthread_attr_setschedparam(&sched_attr, &sched_param);
+
+		pthread_create(&ctx->tid[THREAD_IDX_ECNR], &sched_attr, thread_ecnr,
+					   (void *)ctx);
+		if (ctx->config.use_feedback)
+			pthread_create(&ctx->tid[THREAD_IDX_FEEDBACK], &sched_attr,
+						   thread_feedback, (void *)ctx);
+
+		while(!ctx->stop)
+			usleep(100000);
+
+		int status;
+
+		if (ctx->config.use_feedback) {
+			ctx->feedbackExit = true;
+			while (!ctx->feedbackExited)
+				usleep(1000);
+		}
+
+		ctx->ecnrExit = true;
+		while (!ctx->ecnrExited)
+			usleep(1000);
+
+		ctx->pdmExit = true;
+		while (!ctx->pdmExited)
+			usleep(1000);
+
+		ctx->refExit = true;
+		while (!ctx->refExited)
+			usleep(1000);
+
+		pthread_join(ctx->tid[THREAD_IDX_PDM], (void **)&status);
+		pthread_join(ctx->tid[THREAD_IDX_REF], (void **)&status);
+		pthread_join(ctx->tid[THREAD_IDX_ECNR], (void **)&status);
+		if (ctx->config.use_feedback)
+			pthread_join(ctx->tid[THREAD_IDX_FEEDBACK], (void **)&status);
+
+		delete bufManager;
+
+		munmap(ctx, sizeof(*ctx));
+
+		printf("Exit nx-voice\n", __func__);
+	}
 
 	return 0;
 }
 
+extern "C" void nx_voice_stop(void *handle)
+{
+	struct nx_voice_context *ctx = (struct nx_voice_context *)handle;
+	ctx->stop = true;
+}
+
+extern "C" int nx_voice_get_data(void *handle, short *data, int len)
+{
+	struct nx_voice_context *ctx = (struct nx_voice_context *)handle;
+	int ret;
+
+	ctx->clientWait = true;
+	ret = read(ctx->pipe[0], data, len*2);
+	ctx->clientWait = false;
+
+	return ret;
+}
