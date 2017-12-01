@@ -21,6 +21,7 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/types.h>
 
@@ -453,6 +454,9 @@ extern "C" int nx_voice_start(void *handle, struct nx_smartvoice_config *c)
 	if (pid > 0) {
 		/* here is parent */
 		close(ctx->pipe[1]);
+		/* set non block mode */
+		fcntl(ctx->pipe[0], F_SETFL,
+		      fcntl(ctx->pipe[0], F_GETFL) | O_NONBLOCK);
 		return pid;
 	} else {
 		/* here is child */
@@ -541,14 +545,30 @@ extern "C" void nx_voice_stop(void *handle)
 	ctx->stop = true;
 }
 
-extern "C" int nx_voice_get_data(void *handle, short *data, int len)
+extern "C" int nx_voice_get_data(void *handle, short *data, int sample_count)
 {
 	struct nx_voice_context *ctx = (struct nx_voice_context *)handle;
-	int ret;
+	int ret = 0;
+	int data_size = sample_count * 2;
+	char *p;
 
+	if ((sample_count % 256) != 0) {
+		fprintf(stderr, "sample count must be multiple of 256 but %d\n",
+				sample_count);
+		return -EINVAL;
+	}
+
+	p = (char *)data;
 	ctx->clientWait = true;
-	ret = read(ctx->pipe[0], data, len*2);
+	while (data_size > 0) {
+		usleep(5000);
+		p += ret;
+		ret = read(ctx->pipe[0], p, data_size);
+		if (ret == -1)
+			ret = 0;
+		data_size -= ret;
+	}
 	ctx->clientWait = false;
 
-	return ret;
+	return sample_count * 2;
 }
