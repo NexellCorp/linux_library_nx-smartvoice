@@ -37,19 +37,19 @@
 #define FORMAT_PCM 1
 
 struct wav_header {
-    uint32_t riff_id;
-    uint32_t riff_sz;
-    uint32_t riff_fmt;
-    uint32_t fmt_id;
-    uint32_t fmt_sz;
-    uint16_t audio_format;
-    uint16_t num_channels;
-    uint32_t sample_rate;
-    uint32_t byte_rate;
-    uint16_t block_align;
-    uint16_t bits_per_sample;
-    uint32_t data_id;
-    uint32_t data_sz;
+	uint32_t riff_id;
+	uint32_t riff_sz;
+	uint32_t riff_fmt;
+	uint32_t fmt_id;
+	uint32_t fmt_sz;
+	uint16_t audio_format;
+	uint16_t num_channels;
+	uint32_t sample_rate;
+	uint32_t byte_rate;
+	uint16_t block_align;
+	uint16_t bits_per_sample;
+	uint32_t data_id;
+	uint32_t data_sz;
 };
 
 static void print_wav_header(struct wav_header *h)
@@ -95,23 +95,23 @@ static void *thread_file_save(void *arg)
 		pthread_exit(NULL);
 	}
 
-    header.riff_id = ID_RIFF;
-    header.riff_sz = 0;
-    header.riff_fmt = ID_WAVE;
-    header.fmt_id = ID_FMT;
-    header.fmt_sz = 16;
-    header.audio_format = FORMAT_PCM;
-    header.num_channels = 1;
-    header.sample_rate = 16000;
+	header.riff_id = ID_RIFF;
+	header.riff_sz = 0;
+	header.riff_fmt = ID_WAVE;
+	header.fmt_id = ID_FMT;
+	header.fmt_sz = 16;
+	header.audio_format = FORMAT_PCM;
+	header.num_channels = 1;
+	header.sample_rate = 16000;
 
-    header.bits_per_sample = 16;
-    header.byte_rate = (header.bits_per_sample / 8) * 1 * 16000;
-    header.block_align = 1 * (header.bits_per_sample / 8);
-    header.data_id = ID_DATA;
+	header.bits_per_sample = 16;
+	header.byte_rate = (header.bits_per_sample / 8) * 1 * 16000;
+	header.block_align = 1 * (header.bits_per_sample / 8);
+	header.data_id = ID_DATA;
 
 	int frames = 0;
-    /* leave enough room for header */
-    fseek(file, sizeof(struct wav_header), SEEK_SET);
+	/* leave enough room for header */
+	fseek(file, sizeof(struct wav_header), SEEK_SET);
 
 	while (!ctx->fileSaveExit) {
 		DataBuffer *buffer = manager->dequeueClientDoneBuffer();
@@ -180,7 +180,7 @@ static void *thread_get_data(void *arg)
 
 static void printUsage(char **argv)
 {
-	fprintf(stderr, "Usage: %s [-f filename] [-p] [-g agcgain]\n", argv[0]);
+	fprintf(stderr, "Usage: %s [-f filename] [-p] [-v] [-g agcgain]\n", argv[0]);
 }
 
 static const char *defaultFileName = "/data/tmp/client.wav";
