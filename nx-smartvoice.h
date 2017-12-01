@@ -26,7 +26,7 @@ extern "C" {
 struct ecnr_callback {
 	void (*init)(void);
 	int (*process)(short *, short *, short *, int);
-	int (*post_process)(int, short *);
+	int (*post_process)(int, short *, int);
 	void (*deinit)(void);
 };
 

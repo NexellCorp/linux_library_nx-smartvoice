@@ -41,5 +41,6 @@ LOCAL_C_INCLUDES += \
 	$(LOCAL_PATH)/../../library/libpowervoice
 LOCAL_SHARED_LIBRARIES += \
 	libpvo \
+	libpovosource \
 	libnxvoice
 include $(BUILD_EXECUTABLE)

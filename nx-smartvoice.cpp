@@ -292,7 +292,7 @@ static void *thread_ecnr(void *arg)
 			printf("Detect Keyword\n");
 
 		if (!useFeedback && cb->post_process) {
-			ret = cb->post_process(size/2, (short *)tmpBuffer);
+			ret = cb->post_process(size/2, (short *)tmpBuffer, ret);
 			if (ret)
 				fprintf(stderr, "%s: failed to post_process(ret: %d)\n",
 						__func__, ret);
