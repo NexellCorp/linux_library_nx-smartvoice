@@ -291,12 +291,8 @@ static void *thread_ecnr(void *arg)
 			ret == ctx->config.trigger_done_ret_value)
 			printf("Detect Keyword\n");
 
-		if (!useFeedback && cb->post_process) {
-			ret = cb->post_process(size/2, (short *)tmpBuffer, ret);
-			if (ret)
-				fprintf(stderr, "%s: failed to post_process(ret: %d)\n",
-						__func__, ret);
-		}
+		if (!useFeedback && cb->post_process)
+			cb->post_process(size/2, (short *)tmpBuffer, ret);
 
 		manager->putDoneBuffer(inBuffer);
 
