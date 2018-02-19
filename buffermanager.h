@@ -96,6 +96,7 @@ public:
 	DataBuffer *getRefBuffer();
 	void putRefBuffer(DataBuffer *b);
 	DoneBuffer *getDoneBuffer();
+	DoneBuffer *getDoneBufferNoLock();
 	void putDoneBuffer(DoneBuffer *b);
 	DataBuffer *getOutBuffer();
 	void putOutBuffer(DataBuffer *b);

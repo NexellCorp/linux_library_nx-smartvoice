@@ -181,6 +181,19 @@ DoneBuffer *BufferManager::getDoneBuffer()
 	return b;
 }
 
+DoneBuffer *BufferManager::getDoneBufferNoLock()
+{
+	if (PcmDoneQ.size() && RefDoneQ.size()) {
+		DoneBuffer *b = new DoneBuffer();
+
+		b->pcmBuffer = PcmDoneQ.dequeue();
+		b->refBuffer = RefDoneQ.dequeue();
+		return b;
+	}
+
+	return NULL;
+}
+
 void BufferManager::putDoneBuffer(DoneBuffer *b)
 {
 	PcmFreeQ.queue(b->pcmBuffer);
