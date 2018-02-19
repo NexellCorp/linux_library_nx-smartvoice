@@ -26,7 +26,7 @@
 
 //#define TRACE_BUFFER
 #ifdef TRACE_BUFFER
-#define tr_b(a...) printf(a)
+#define tr_b(a...) LOGE(a)
 #else
 #define tr_b(a...)
 #endif

@@ -17,6 +17,7 @@ LOCAL_PATH := $(call my-dir)
 # libnxvoice
 include $(CLEAR_VARS)
 LOCAL_MODULE :=libnxvoice
+LOCAL_LDLIBS := -llog
 LOCAL_SRC_FILES := \
 	buffermanager.cpp \
 	nx-smartvoice.cpp
@@ -43,4 +44,5 @@ LOCAL_SHARED_LIBRARIES += \
 	libpvo \
 	libpovosource \
 	libnxvoice
+LOCAL_LDLIBS := -llog
 include $(BUILD_EXECUTABLE)

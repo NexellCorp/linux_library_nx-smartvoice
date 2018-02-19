@@ -19,8 +19,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-
+#include <unistd.h>
+#include <sys/types.h>
+#include <android/log.h>
 #include "buffermanager.h"
+
+#define LOGI(fmt, args...)      __android_log_print(ANDROID_LOG_INFO , TAG, fmt, ##args)
+#define LOGD(fmt, args...)      __android_log_print(ANDROID_LOG_DEBUG, TAG, fmt, ##args)
+#define LOGW(fmt, args...)      __android_log_print(ANDROID_LOG_WARN , TAG, fmt, ##args)
+#define LOGE(fmt, args...)      __android_log_print(ANDROID_LOG_ERROR, TAG, fmt, ##args)
+
+static const char * TAG         = "POVO";
 
 BufferManager::BufferManager()
 {
@@ -75,12 +84,12 @@ BufferManager::~BufferManager()
 
 void BufferManager::printQStatus()
 {
-	printf("PcmFreeQ: %d\n", PcmFreeQ.size());
-	printf("PcmDoneQ: %d\n", PcmDoneQ.size());
-	printf("RefFreeQ: %d\n", RefFreeQ.size());
-	printf("RefDoneQ: %d\n", RefDoneQ.size());
-	printf("OutFreeQ: %d\n", OutFreeQ.size());
-	printf("OutDoneQ: %d\n", OutDoneQ.size());
+	LOGD("PcmFreeQ: %d\n", PcmFreeQ.size());
+	LOGD("PcmDoneQ: %d\n", PcmDoneQ.size());
+	LOGD("RefFreeQ: %d\n", RefFreeQ.size());
+	LOGD("RefDoneQ: %d\n", RefDoneQ.size());
+	LOGD("OutFreeQ: %d\n", OutFreeQ.size());
+	LOGD("OutDoneQ: %d\n", OutDoneQ.size());
 }
 
 #define BUFFER_COUNT	64

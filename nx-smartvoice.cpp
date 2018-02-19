@@ -24,7 +24,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/types.h>
-
+#include <android/log.h>
 #include <tinyalsa/asoundlib.h>
 
 #include "nx_pdm.h"
@@ -55,6 +55,12 @@
 #define FEEDBACK_PERIOD_COUNT	16
 #define FEEDBACK_BITS			16
 
+#define LOGI(fmt, args...)      __android_log_print(ANDROID_LOG_INFO , TAG, fmt, ##args)
+#define LOGD(fmt, args...)      __android_log_print(ANDROID_LOG_DEBUG, TAG, fmt, ##args)
+#define LOGW(fmt, args...)      __android_log_print(ANDROID_LOG_WARN , TAG, fmt, ##args)
+#define LOGE(fmt, args...)      __android_log_print(ANDROID_LOG_ERROR, TAG, fmt, ##args)
+
+static const char * TAG         = "POVO";
 struct nx_voice_context {
 	pthread_t tid[MAX_THREAD_NUMBER];
 	BufferManager *bufManager;
@@ -126,8 +132,8 @@ static void *thread_pdm(void *arg)
 
 	pcm = pcm_open(0, ctx->config.pdm_devnum, PCM_IN, &config);
 	if (!pcm || !pcm_is_ready(pcm)) {
-		fprintf(stderr, "%s: unable_to open PCM device(%s)\n",
-				__func__, pcm_get_error(pcm));
+		LOGE("%s: unable_to open PCM device(%s)\n",
+			 __func__, pcm_get_error(pcm));
 		return NULL;
 	}
 
@@ -137,25 +143,25 @@ static void *thread_pdm(void *arg)
 	int ret;
 
 	if (0 != pdm_SetParam(&pdm_st, PDM_PARAM_GAIN, ctx->config.pdm_gain))
-		fprintf(stderr, "failed: pdm gain parameter [%d]",
-				ctx->config.pdm_gain);
+		LOGE("failed: pdm gain parameter [%d]",
+			 ctx->config.pdm_gain);
 
 	while (!ctx->pdmExit) {
 		ret = pcm_read(pcm, buffer, unit_size/2);
 		if (ret) {
-			fprintf(stderr, "%s: failed to pcm_read\n", __func__);
+			LOGE("%s: failed to pcm_read\n", __func__);
 			break;
 		}
 
 		ret = pcm_read(pcm, buffer + unit_size/2, unit_size/2);
 		if (ret) {
-			fprintf(stderr, "%s: failed to pcm_read\n", __func__);
+			LOGE("%s: failed to pcm_read\n", __func__);
 			break;
 		}
 
 		outBuffer = manager->getPcmBuffer();
 		if (!outBuffer) {
-			fprintf(stderr, "%s: failed to getPcmBuffer\n", __func__);
+			LOGE("%s: failed to getPcmBuffer\n", __func__);
 			manager->printQStatus();
 			break;
 		}
@@ -167,7 +173,7 @@ static void *thread_pdm(void *arg)
 	free(buffer);
 	pcm_close(pcm);
 
-	printf("Exit %s\n", __func__);
+	LOGD("Exit %s\n", __func__);
 
 	ctx->pdmExited = true;
 	pthread_exit(NULL);
@@ -199,7 +205,7 @@ static void *thread_ref(void *arg)
 
 	pcm = pcm_open(0, ctx->config.ref_devnum, PCM_IN, &config);
 	if (!pcm || !pcm_is_ready(pcm)) {
-		fprintf(stderr, "%s: unable_to open PCM device(%s)\n",
+		LOGE("%s: unable_to open PCM device(%s)\n",
 			__func__, pcm_get_error(pcm));
 		return NULL;
 	}
@@ -212,13 +218,13 @@ static void *thread_ref(void *arg)
 	while (!ctx->refExit) {
 		ret = pcm_read(pcm, buffer, size);
 		if (ret) {
-			fprintf(stderr, "%s: failed to pcm_read\n", __func__);
+			LOGE("%s: failed to pcm_read\n", __func__);
 			break;
 		}
 
 		outBuffer = manager->getRefBuffer();
 		if (!outBuffer) {
-			fprintf(stderr, "%s: failed to getRefBuffer\n", __func__);
+			LOGE("%s: failed to getRefBuffer\n", __func__);
 			manager->printQStatus();
 			break;
 		}
@@ -231,7 +237,7 @@ static void *thread_ref(void *arg)
 	pcm_close(pcm);
 	audio_resample_close(rctx);
 
-	printf("Exit %s\n", __func__);
+	LOGD("Exit %s\n", __func__);
 	ctx->refExited = true;
 
 	pthread_exit(NULL);
@@ -248,7 +254,7 @@ static void *thread_ecnr(void *arg)
 		cb->init();
 
 	if (!cb->process) {
-		fprintf(stderr, "ECNR callback process is NULL!!!\n");
+		LOGE("ECNR callback process is NULL!!!\n");
 		return NULL;
 	}
 
@@ -274,7 +280,7 @@ static void *thread_ecnr(void *arg)
 								  (short *)outBuffer->buf,
 								  1);
 			} else {
-				fprintf(stderr, "%s: overrun outBuffer!!!\n", __func__);
+				LOGE("%s: overrun outBuffer!!!\n", __func__);
 				ret = cb->process((short *)inBuffer->pcmBuffer->buf,
 								  (short *)inBuffer->refBuffer->buf,
 								  (short *)tmpBuffer,
@@ -312,7 +318,7 @@ static void *thread_ecnr(void *arg)
 	if (cb->deinit)
 		cb->deinit();
 
-	printf("Exit %s\n", __func__);
+	LOGD("Exit %s\n", __func__);
 
 	ctx->ecnrExited = true;
 
@@ -341,8 +347,8 @@ static void *thread_feedback(void *arg)
 
 	pcm = pcm_open(0, ctx->config.feedback_devnum, PCM_OUT, &config);
 	if (!pcm || !pcm_is_ready(pcm)) {
-		fprintf(stderr, "%s: unable_to open PCM device(%s)\n",
-				__func__, pcm_get_error(pcm));
+		LOGE("%s: unable_to open PCM device(%s)\n",
+		     __func__, pcm_get_error(pcm));
 		return NULL;
 	}
 
@@ -354,7 +360,7 @@ static void *thread_feedback(void *arg)
 		outBuffer = manager->getDoneOutBuffer();
 		ret = pcm_write(pcm, outBuffer->buf, outBuffer->size);
 		if (ret) {
-			fprintf(stderr, "%s: failed to pcm_write\n", __func__);
+			LOGE("%s: failed to pcm_write\n", __func__);
 			break;
 		}
 		manager->putDoneOutBuffer(outBuffer);
@@ -380,14 +386,14 @@ extern "C" void *nx_voice_create_handle(void)
 										  PROT_READ | PROT_WRITE,
 										  MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	if (ctx == MAP_FAILED) {
-		fprintf(stderr, "failed to create handle\n");
+		LOGE("failed to create handle\n");
 		return NULL;
 	}
 	memset(ctx, 0, sizeof(*ctx));
 
 	int ret = pipe(ctx->pipe);
 	if (ret < 0) {
-		fprintf(stderr, "failed to create pipe\n");
+		LOGE("failed to create pipe\n");
 		return NULL;
 	}
 
@@ -406,11 +412,11 @@ extern "C" int nx_voice_start(void *handle, struct nx_smartvoice_config *c)
 
 	ctx = (struct nx_voice_context *)handle;
 
-	printf("Start nx-voice\n");
+	LOGD("Start nx-voice\n");
 
 	BufferManager *bufManager = new BufferManager();
 	if(!bufManager) {
-		fprintf(stderr, "failed to alloc bufManager\n");
+		LOGE("failed to alloc bufManager\n");
 		return -ENOMEM;
 	}
 
@@ -459,7 +465,7 @@ extern "C" int nx_voice_start(void *handle, struct nx_smartvoice_config *c)
 		close(ctx->pipe[0]);
 		pid_t sid = setsid();
 		if (sid < 0) {
-			fprintf(stderr, "failed to setsid: ret %d\n", sid);
+			LOGE("failed to setsid: ret %d\n", sid);
 			exit(EXIT_FAILURE);
 		};
 
@@ -549,8 +555,8 @@ extern "C" int nx_voice_get_data(void *handle, short *data, int sample_count)
 	char *p;
 
 	if ((sample_count % 256) != 0) {
-		fprintf(stderr, "sample count must be multiple of 256 but %d\n",
-				sample_count);
+		LOGE("sample count must be multiple of 256 but %d\n",
+			 sample_count);
 		return -EINVAL;
 	}
 
