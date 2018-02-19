@@ -281,48 +281,52 @@ static void *thread_ecnr(void *arg)
 	while (!ctx->ecnrExit) {
 		inBuffer = manager->getDoneBuffer();
 
-		if (useFeedback) {
-			outBuffer = manager->getOutBuffer();
+		do {
+			if (useFeedback) {
+				outBuffer = manager->getOutBuffer();
 
-			if (outBuffer != NULL) {
-				ret = cb->process((short *)inBuffer->pcmBuffer->buf,
-								  (short *)inBuffer->refBuffer->buf,
-								  (short *)outBuffer->buf,
-								  (short *)outBuffer->bufUser,
-								  1);
+				if (outBuffer != NULL) {
+					ret = cb->process((short *)inBuffer->pcmBuffer->buf,
+									  (short *)inBuffer->refBuffer->buf,
+									  (short *)outBuffer->buf,
+									  (short *)outBuffer->bufUser,
+									  1);
+				} else {
+					LOGE("%s: overrun outBuffer!!!\n", __func__);
+					ret = cb->process((short *)inBuffer->pcmBuffer->buf,
+									  (short *)inBuffer->refBuffer->buf,
+									  (short *)tmpBuffer,
+									  (short *)tmpBuffer2,
+									  1);
+				}
 			} else {
-				LOGE("%s: overrun outBuffer!!!\n", __func__);
 				ret = cb->process((short *)inBuffer->pcmBuffer->buf,
 								  (short *)inBuffer->refBuffer->buf,
 								  (short *)tmpBuffer,
 								  (short *)tmpBuffer2,
 								  1);
 			}
-		} else {
-			ret = cb->process((short *)inBuffer->pcmBuffer->buf,
-							  (short *)inBuffer->refBuffer->buf,
-							  (short *)tmpBuffer,
-							  (short *)tmpBuffer2,
-							  1);
-		}
 
-		if (ctx->config.check_trigger && ret > 0)
-			LOGD("Detect Keyword\n");
+			if (ctx->config.check_trigger && ret > 0)
+				LOGD("Detect Keyword\n");
 
-		if (!useFeedback && cb->post_process)
-			cb->post_process(size/2, (short *)tmpBuffer, ret);
+			if (!useFeedback && cb->post_process)
+				cb->post_process(size/2, (short *)tmpBuffer, ret);
 
-		manager->putDoneBuffer(inBuffer);
+			manager->putDoneBuffer(inBuffer);
 
-		if (useFeedback && outBuffer != NULL) {
-			if (ctx->clientWait && ctx->pipe[1] > 0)
-				write(ctx->pipe[1], outBuffer->buf, outBuffer->size);
+			if (useFeedback && outBuffer != NULL) {
+				if (ctx->clientWait && ctx->pipe[1] > 0)
+					write(ctx->pipe[1], outBuffer->buf, outBuffer->size);
 
-			manager->putOutBuffer(outBuffer);
-		} else {
-			if (ctx->clientWait && ctx->pipe[1] > 0)
-				write(ctx->pipe[1], tmpBuffer2, size);
-		}
+				manager->putOutBuffer(outBuffer);
+			} else {
+				if (ctx->clientWait && ctx->pipe[1] > 0)
+					write(ctx->pipe[1], tmpBuffer2, size);
+			}
+
+			inBuffer = manager->getDoneBufferNoLock();
+		} while (inBuffer != NULL);
 	}
 
 	free(tmpBuffer);
