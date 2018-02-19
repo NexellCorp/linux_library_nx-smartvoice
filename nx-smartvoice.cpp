@@ -88,18 +88,18 @@ struct nx_voice_context {
 static void print_thread_info(const char *name, struct pcm_config *c,
 							  int unit_size)
 {
-	printf("==================================\n");
-	printf("start thread %s\n", name);
+	LOGD("==================================\n");
+	LOGD("start thread %s\n", name);
 	if (c) {
-		printf("pcm config info\n");
-		printf("channel: %d\n", c->channels);
-		printf("rate: %d\n", c->rate);
-		printf("period size: %d\n", c->period_size);
-		printf("period count: %d\n", c->period_count);
+		LOGD("pcm config info\n");
+		LOGD("channel: %d\n", c->channels);
+		LOGD("rate: %d\n", c->rate);
+		LOGD("period size: %d\n", c->period_size);
+		LOGD("period count: %d\n", c->period_count);
 	}
-	printf("unit size: %d\n", unit_size);
-	printf("==================================\n");
-	printf("\n");
+	LOGD("unit size: %d\n", unit_size);
+	LOGD("==================================\n");
+	LOGD("\n");
 }
 
 static int calcUnitSize(long interval_us, long rate, int bits, int channel_num)
@@ -251,7 +251,7 @@ static void *thread_ecnr(void *arg)
 	struct ecnr_callback *cb = &ctx->config.cb;
 
 	if (cb->init)
-		cb->init();
+		cb->init(0, 0, NULL);
 
 	if (!cb->process) {
 		LOGE("ECNR callback process is NULL!!!\n");
@@ -261,6 +261,16 @@ static void *thread_ecnr(void *arg)
 	/* feedback unit size is same to ecnr out size */
 	int size = ctx->feedbackUnitSize;
 	char *tmpBuffer = (char *)malloc(size);
+	if (!tmpBuffer) {
+		LOGE("Can't allocate tmpBuffer\n");
+		return NULL;
+	}
+	char *tmpBuffer2 = (char *)malloc(size);
+	if (!tmpBuffer2) {
+		LOGE("Can't allocate tmpBuffer2\n");
+		return NULL;
+	}
+
 	DoneBuffer *inBuffer = NULL;
 
 	print_thread_info("ecnr", NULL, size);
@@ -278,24 +288,27 @@ static void *thread_ecnr(void *arg)
 				ret = cb->process((short *)inBuffer->pcmBuffer->buf,
 								  (short *)inBuffer->refBuffer->buf,
 								  (short *)outBuffer->buf,
+								  (short *)outBuffer->bufUser,
 								  1);
 			} else {
 				LOGE("%s: overrun outBuffer!!!\n", __func__);
 				ret = cb->process((short *)inBuffer->pcmBuffer->buf,
 								  (short *)inBuffer->refBuffer->buf,
 								  (short *)tmpBuffer,
+								  (short *)tmpBuffer2,
 								  1);
 			}
 		} else {
 			ret = cb->process((short *)inBuffer->pcmBuffer->buf,
 							  (short *)inBuffer->refBuffer->buf,
 							  (short *)tmpBuffer,
+							  (short *)tmpBuffer2,
 							  1);
 		}
 
 		if (ctx->config.check_trigger &&
 			ret == ctx->config.trigger_done_ret_value)
-			printf("Detect Keyword\n");
+			LOGD("Detect Keyword\n");
 
 		if (!useFeedback && cb->post_process)
 			cb->post_process(size/2, (short *)tmpBuffer, ret);
@@ -309,11 +322,12 @@ static void *thread_ecnr(void *arg)
 			manager->putOutBuffer(outBuffer);
 		} else {
 			if (ctx->clientWait && ctx->pipe[1] > 0)
-				write(ctx->pipe[1], tmpBuffer, size);
+				write(ctx->pipe[1], tmpBuffer2, size);
 		}
 	}
 
 	free(tmpBuffer);
+	free(tmpBuffer2);
 
 	if (cb->deinit)
 		cb->deinit();
@@ -368,7 +382,7 @@ static void *thread_feedback(void *arg)
 
 	pcm_close(pcm);
 
-	printf("Exit %s\n", __func__);
+	LOGD("Exit %s\n", __func__);
 	ctx->feedbackExited = true;
 
 	return NULL;
@@ -441,13 +455,11 @@ extern "C" int nx_voice_start(void *handle, struct nx_smartvoice_config *c)
 	ctx->feedbackExit = false;
 	ctx->feedbackExited = false;
 
-#if 0
-	printf("pdmUnitSize: %d\n", ctx->pdmUnitSize);
-	printf("refUnitSize: %d\n", ctx->refUnitSize);
-	printf("feedbackUnitSize: %d\n", ctx->feedbackUnitSize);
-	printf("pdmOutSize: %d\n", ctx->pdmOutSize);
-	printf("refOutSize: %d\n", ctx->refOutSize);
-#endif
+	LOGD("pdmUnitSize: %d\n", ctx->pdmUnitSize);
+	LOGD("refUnitSize: %d\n", ctx->refUnitSize);
+	LOGD("feedbackUnitSize: %d\n", ctx->feedbackUnitSize);
+	LOGD("pdmOutSize: %d\n", ctx->pdmOutSize);
+	LOGD("refOutSize: %d\n", ctx->refOutSize);
 
 	bufManager->Init(ctx->pdmOutSize, ctx->refOutSize, ctx->feedbackUnitSize);
 
@@ -535,7 +547,7 @@ extern "C" int nx_voice_start(void *handle, struct nx_smartvoice_config *c)
 
 		munmap(ctx, sizeof(*ctx));
 
-		printf("Exit nx-voice\n", __func__);
+		LOGD("Exit nx-voice\n", __func__);
 	}
 
 	return 0;

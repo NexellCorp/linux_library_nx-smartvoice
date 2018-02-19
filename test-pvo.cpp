@@ -25,7 +25,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 
-#include "pvpre.h"
+#include "pvo_wrapper.h"
 #include "buffermanager.h"
 #include "nx-smartvoice.h"
 
