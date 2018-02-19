@@ -480,12 +480,6 @@ extern "C" int nx_voice_start(void *handle, struct nx_smartvoice_config *c)
 			exit(EXIT_FAILURE);
 		};
 
-		if (!ctx->config.verbose) {
-			close(STDIN_FILENO);
-			close(STDOUT_FILENO);
-			close(STDERR_FILENO);
-		}
-
 		pthread_attr_t sched_attr;
 		int fifoMaxPriority;
 		struct sched_param sched_param;
