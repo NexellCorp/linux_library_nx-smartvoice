@@ -76,6 +76,7 @@ private:
 struct DataBuffer {
 	int size;
 	char *buf;
+	char *bufUser;
 };
 
 struct DoneBuffer {

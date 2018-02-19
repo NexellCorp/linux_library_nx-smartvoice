@@ -104,6 +104,7 @@ void BufferManager::Init(int pcmBufSize, int refBufSize, int outBufSize = 0)
 		DataBuffer *b = new DataBuffer();
 		b->size = PcmBufSize;
 		b->buf = (char *)malloc(PcmBufSize);
+		b->bufUser = NULL;
 		PcmFreeQ.queue(b);
 	}
 
@@ -112,6 +113,7 @@ void BufferManager::Init(int pcmBufSize, int refBufSize, int outBufSize = 0)
 		DataBuffer *b = new DataBuffer();
 		b->size = RefBufSize;
 		b->buf = (char *)malloc(RefBufSize);
+		b->bufUser = NULL;
 		RefFreeQ.queue(b);
 	}
 
@@ -122,6 +124,7 @@ void BufferManager::Init(int pcmBufSize, int refBufSize, int outBufSize = 0)
 		DataBuffer *b = new DataBuffer();
 		b->size = OutBufSize;
 		b->buf = (char *)malloc(OutBufSize);
+		b->bufUser = (char *)malloc(OutBufSize);
 		OutFreeQ.queue(b);
 	}
 }
