@@ -306,8 +306,7 @@ static void *thread_ecnr(void *arg)
 							  1);
 		}
 
-		if (ctx->config.check_trigger &&
-			ret == ctx->config.trigger_done_ret_value)
+		if (ctx->config.check_trigger && ret > 0)
 			LOGD("Detect Keyword\n");
 
 		if (!useFeedback && cb->post_process)
