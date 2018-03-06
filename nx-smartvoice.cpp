@@ -249,6 +249,7 @@ static void *thread_ecnr(void *arg)
 	BufferManager *manager = ctx->bufManager;
 	bool useFeedback = ctx->config.use_feedback;
 	struct ecnr_callback *cb = &ctx->config.cb;
+        int spot_idx = 1;
 
 	if (cb->init)
 		cb->init(0, 0, NULL);
@@ -260,16 +261,9 @@ static void *thread_ecnr(void *arg)
 
 	/* feedback unit size is same to ecnr out size */
 	int size = ctx->feedbackUnitSize;
-	char *tmpBuffer = (char *)malloc(size);
-	if (!tmpBuffer) {
-		LOGE("Can't allocate tmpBuffer\n");
-		return NULL;
-	}
-	char *tmpBuffer2 = (char *)malloc(size);
-	if (!tmpBuffer2) {
-		LOGE("Can't allocate tmpBuffer2\n");
-		return NULL;
-	}
+
+	short tmpBuffer[256];
+	short tmpBuffer2[256];
 
 	DoneBuffer *inBuffer = NULL;
 
@@ -290,28 +284,35 @@ static void *thread_ecnr(void *arg)
 									  (short *)inBuffer->refBuffer->buf,
 									  (short *)outBuffer->buf,
 									  (short *)outBuffer->bufUser,
-									  1);
+									  spot_idx);
 				} else {
 					LOGE("%s: overrun outBuffer!!!\n", __func__);
 					ret = cb->process((short *)inBuffer->pcmBuffer->buf,
 									  (short *)inBuffer->refBuffer->buf,
 									  (short *)tmpBuffer,
 									  (short *)tmpBuffer2,
-									  1);
+									  spot_idx);
 				}
 			} else {
 				ret = cb->process((short *)inBuffer->pcmBuffer->buf,
 								  (short *)inBuffer->refBuffer->buf,
 								  (short *)tmpBuffer,
 								  (short *)tmpBuffer2,
-								  1);
+								  spot_idx);
 			}
 
 			if (ctx->config.check_trigger && ret > 0)
 				LOGD("Detect Keyword\n");
 
-			if (!useFeedback && cb->post_process)
-				cb->post_process(size/2, (short *)tmpBuffer, ret);
+			if (!useFeedback && cb->post_process) {
+				if (outBuffer != NULL) {
+                                        int pret = cb->post_process(size/2, (short *)outBuffer->bufUser, ret);
+                                        if (pret > -1) spot_idx = pret;
+                                } else {
+                                        int pret = cb->post_process(size/2, (short *)tmpBuffer2, ret);
+                                        if (pret > -1) spot_idx = pret;
+                                }
+                        }
 
 			manager->putDoneBuffer(inBuffer);
 
@@ -328,9 +329,6 @@ static void *thread_ecnr(void *arg)
 			inBuffer = manager->getDoneBufferNoLock();
 		} while (inBuffer != NULL);
 	}
-
-	free(tmpBuffer);
-	free(tmpBuffer2);
 
 	if (cb->deinit)
 		cb->deinit();
