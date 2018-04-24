@@ -14,8 +14,21 @@
 #
 LOCAL_PATH := $(call my-dir)
 
+ANDROID_VERSION_STR := $(subst ., ,$(PLATFORM_VERSION))
+ANDROID_VERSION_MAJOR := $(firstword $(ANDROID_VERSION_STR))
+
 # libnxvoice
 include $(CLEAR_VARS)
+
+ifeq "7" "$(ANDROID_VERSION_MAJOR)"
+LOCAL_CFLAGS += -DNOUGAT=1
+endif
+
+# if you want to save raw pcm data, uncomment below cflags
+# and make folder /data/tmp/
+# you can check /data/tmp/ref.raw , pdm.raw, pdm2.raw
+#LOCAL_CFLAGS += -DFILE_DUMP=1
+
 LOCAL_MODULE :=libnxvoice
 LOCAL_LDLIBS := -llog
 LOCAL_SRC_FILES := \
@@ -23,26 +36,63 @@ LOCAL_SRC_FILES := \
 	nx-smartvoice.cpp
 LOCAL_C_INCLUDES += \
 	external/tinyalsa/include \
+	system/core/include \
 	$(LOCAL_PATH)/../../library/libagcpdm \
-	$(LOCAL_PATH)/../../library/libresample
+	$(LOCAL_PATH)/../../library/libresample \
+	$(LOCAL_PATH)/../../library/include
 LOCAL_SHARED_LIBRARIES += \
-	libtinyalsa
+	libtinyalsa \
+	libcutils \
+	libutils
 LOCAL_STATIC_LIBRARIES += \
 	libagcpdm \
 	libresample
+
 include $(BUILD_SHARED_LIBRARY)
 
-# test-pvo
+# test-svoice
 include $(CLEAR_VARS)
-LOCAL_MODULE := test-pvo
+
+ifeq "7" "$(ANDROID_VERSION_MAJOR)"
+LOCAL_CFLAGS += -DNOUGAT=1
+endif
+#LOCAL_CFLAGS += -DFILE_DUMP=1
+
+LOCAL_MODULE := test-svoice
 LOCAL_SRC_FILES := \
 	buffermanager.cpp \
-	test-pvo.cpp
+	test-svoice.cpp
+LOCAL_C_INCLUDES += \
+	system/core/include \
+	$(LOCAL_PATH)/../../library/include
+LOCAL_SHARED_LIBRARIES += \
+	libcutils \
+	libutils \
+	libnxvoice
+
+ifneq ($(filter pvo,$(SVOICE_ECNR_VENDOR)),)
+LOCAL_SRC_FILES += \
+	pvo.c
 LOCAL_C_INCLUDES += \
 	$(LOCAL_PATH)/../../library/libpowervoice
 LOCAL_SHARED_LIBRARIES += \
 	libpvo \
-	libpovosource \
-	libnxvoice
+	libpovosource
+endif
+
+ifneq ($(filter mwsr,$(SVOICE_ECNR_VENDOR)),)
+LOCAL_SRC_FILES += \
+	mwsr.c
+LOCAL_C_INCLUDES += \
+	$(LOCAL_PATH)/../../library/libmwsr
+LOCAL_SHARED_LIBRARIES += \
+	libmwsr
+endif
+
+ifneq ($(filter bypass,$(SVOICE_ECNR_VENDOR)),)
+LOCAL_SRC_FILES += \
+	bypass.c
+endif
+
 LOCAL_LDLIBS := -llog
 include $(BUILD_EXECUTABLE)

@@ -29,7 +29,14 @@
 #define LOGW(fmt, args...)      __android_log_print(ANDROID_LOG_WARN , TAG, fmt, ##args)
 #define LOGE(fmt, args...)      __android_log_print(ANDROID_LOG_ERROR, TAG, fmt, ##args)
 
-static const char * TAG         = "POVO";
+//#define TRACE_BUFFER
+#ifdef TRACE_BUFFER
+#define tr_b(a...) LOGE(a)
+#else
+#define tr_b(a...)
+#endif
+
+static const char * TAG         = "SVOICE";
 
 BufferManager::BufferManager()
 {
@@ -57,6 +64,20 @@ BufferManager::~BufferManager()
 		free(b);
 	}
 
+	if (PcmBufSize2) {
+		while (!PcmFreeQ2.isEmpty()) {
+			b = PcmFreeQ2.dequeue();
+			free(b->buf);
+			free(b);
+		}
+
+		while (!PcmDoneQ2.isEmpty()) {
+			b = PcmDoneQ2.dequeue();
+			free(b->buf);
+			free(b);
+		}
+	}
+
 	while (!RefFreeQ.isEmpty()) {
 		b = RefFreeQ.dequeue();
 		free(b->buf);
@@ -68,6 +89,9 @@ BufferManager::~BufferManager()
 		free(b->buf);
 		free(b);
 	}
+
+	if (OutBufSize == 0)
+		return;
 
 	while (!OutFreeQ.isEmpty()) {
 		b = OutFreeQ.dequeue();
@@ -86,16 +110,23 @@ void BufferManager::printQStatus()
 {
 	LOGD("PcmFreeQ: %d\n", PcmFreeQ.size());
 	LOGD("PcmDoneQ: %d\n", PcmDoneQ.size());
+	if (PcmBufSize2) {
+		LOGD("PcmFreeQ2: %d\n", PcmFreeQ2.size());
+		LOGD("PcmDoneQ2: %d\n", PcmDoneQ2.size());
+	}
 	LOGD("RefFreeQ: %d\n", RefFreeQ.size());
 	LOGD("RefDoneQ: %d\n", RefDoneQ.size());
+	if (OutBufSize == 0)
+		return;
 	LOGD("OutFreeQ: %d\n", OutFreeQ.size());
 	LOGD("OutDoneQ: %d\n", OutDoneQ.size());
 }
 
 #define BUFFER_COUNT	64
-void BufferManager::Init(int pcmBufSize, int refBufSize, int outBufSize = 0)
+void BufferManager::Init(int pcmBufSize, int pcmBufSize2, int refBufSize, int outBufSize = 0)
 {
 	PcmBufSize = pcmBufSize;
+	PcmBufSize2 = pcmBufSize2;
 	RefBufSize = refBufSize;
 	OutBufSize = outBufSize;
 
@@ -108,6 +139,17 @@ void BufferManager::Init(int pcmBufSize, int refBufSize, int outBufSize = 0)
 		PcmFreeQ.queue(b);
 	}
 
+	if (PcmBufSize2) {
+		/* allocate pcmbuffer2 */
+		for (int i = 0; i < BUFFER_COUNT; i++) {
+			DataBuffer *b = new DataBuffer();
+			b->size = PcmBufSize2;
+			b->buf = (char *)malloc(PcmBufSize2);
+			b->bufUser = NULL;
+			PcmFreeQ2.queue(b);
+		}
+	}
+
 	/* allocate refbuffer */
 	for (int i = 0; i < BUFFER_COUNT; i++) {
 		DataBuffer *b = new DataBuffer();
@@ -117,7 +159,7 @@ void BufferManager::Init(int pcmBufSize, int refBufSize, int outBufSize = 0)
 		RefFreeQ.queue(b);
 	}
 
-	if (outBufSize == 0)
+	if (OutBufSize == 0)
 		return;
 
 	for (int i = 0; i < BUFFER_COUNT; i++) {
@@ -147,6 +189,24 @@ void BufferManager::putPcmBuffer(DataBuffer *b)
 	pthread_mutex_unlock(&Mutex);
 }
 
+DataBuffer *BufferManager::getPcmBuffer2()
+{
+	if (PcmFreeQ2.isEmpty())
+		return NULL;
+
+	tr_b("%s: PcmFreeQ2 count %d\n", __func__, PcmFreeQ2.size());
+	return PcmFreeQ2.dequeue();
+}
+
+void BufferManager::putPcmBuffer2(DataBuffer *b)
+{
+	PcmDoneQ2.queue(b);
+	tr_b("%s: PcmDoneQ2 count %d\n", __func__, PcmDoneQ2.size());
+	pthread_mutex_lock(&Mutex);
+	pthread_cond_signal(&Cond);
+	pthread_mutex_unlock(&Mutex);
+}
+
 DataBuffer *BufferManager::getRefBuffer()
 {
 	if (RefFreeQ.isEmpty())
@@ -165,17 +225,35 @@ void BufferManager::putRefBuffer(DataBuffer *b)
 	pthread_mutex_unlock(&Mutex);
 }
 
+bool BufferManager::getRefFreeSync()
+{
+	size_t refFreeQSize;
+
+	refFreeQSize = RefFreeQ.size();
+	tr_b("%s: RefFreeQ count %d\n", __func__, RefFreeQ.size());
+
+	if ((refFreeQSize < PcmFreeQ.size()) ||
+	 (PcmBufSize2 && (refFreeQSize < PcmFreeQ2.size())))
+		return false;
+	else
+		return true;
+}
+
 DoneBuffer *BufferManager::getDoneBuffer()
 {
 	DoneBuffer *b = new DoneBuffer();
 
-	while (PcmDoneQ.isEmpty() || RefDoneQ.isEmpty()) {
+	while (PcmDoneQ.isEmpty() ||
+		(PcmBufSize2 && PcmDoneQ2.isEmpty()) ||
+	       RefDoneQ.isEmpty()) {
 		pthread_mutex_lock(&Mutex);
 		pthread_cond_wait(&Cond, &Mutex);
 		pthread_mutex_unlock(&Mutex);
 	}
 
 	b->pcmBuffer = PcmDoneQ.dequeue();
+	if (PcmBufSize2)
+		b->pcmBuffer2 = PcmDoneQ2.dequeue();
 	b->refBuffer = RefDoneQ.dequeue();
 
 	return b;
@@ -183,10 +261,12 @@ DoneBuffer *BufferManager::getDoneBuffer()
 
 DoneBuffer *BufferManager::getDoneBufferNoLock()
 {
-	if (PcmDoneQ.size() && RefDoneQ.size()) {
+	if (PcmDoneQ.size() && (PcmBufSize2 && PcmDoneQ2.size()) && RefDoneQ.size()) {
 		DoneBuffer *b = new DoneBuffer();
 
 		b->pcmBuffer = PcmDoneQ.dequeue();
+		if (PcmBufSize2)
+			b->pcmBuffer2 = PcmDoneQ2.dequeue();
 		b->refBuffer = RefDoneQ.dequeue();
 		return b;
 	}
@@ -197,6 +277,8 @@ DoneBuffer *BufferManager::getDoneBufferNoLock()
 void BufferManager::putDoneBuffer(DoneBuffer *b)
 {
 	PcmFreeQ.queue(b->pcmBuffer);
+	if (PcmBufSize2)
+		PcmFreeQ2.queue(b->pcmBuffer2);
 	RefFreeQ.queue(b->refBuffer);
 	delete b;
 }

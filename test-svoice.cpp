@@ -24,8 +24,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <pthread.h>
-
-#include "pvo_wrapper.h"
+#include "ecnr_wrapper.h"
 #include "buffermanager.h"
 #include "nx-smartvoice.h"
 
@@ -78,6 +77,7 @@ struct filesave_context {
 	bool fileSaveExited;
 	bool getDataExit;
 	bool getDataExited = false;
+	int sample_count;
 };
 
 static void *thread_file_save(void *arg)
@@ -109,12 +109,15 @@ static void *thread_file_save(void *arg)
 	header.block_align = 1 * (header.bits_per_sample / 8);
 	header.data_id = ID_DATA;
 
+	int sample_count = ctx->sample_count;
+
+	DataBuffer *buffer = NULL;
 	int frames = 0;
 	/* leave enough room for header */
 	fseek(file, sizeof(struct wav_header), SEEK_SET);
 
 	while (!ctx->fileSaveExit) {
-		DataBuffer *buffer = manager->dequeueClientDoneBuffer();
+		buffer = manager->dequeueClientDoneBuffer();
 		if (!buffer) {
 			fprintf(stderr, "Timeout to dequeueClientDoneBuffer\n");
 		} else {
@@ -123,7 +126,7 @@ static void *thread_file_save(void *arg)
 				fprintf(stderr, "Error fwrite\n");
 				break;
 			}
-			frames += 256;
+			frames += sample_count;
 			manager->queueClientFreeBuffer(buffer);
 		}
 	}
@@ -135,24 +138,25 @@ static void *thread_file_save(void *arg)
 	print_wav_header(&header);
 
 	printf("File %s created: %d frames written\n", ctx->fileName, frames);
-	printf("File size must be %d\n", sizeof(struct wav_header) + frames * 512);
+	printf("File size must be %d\n", sizeof(struct wav_header) + frames * sample_count * 2);
 	fclose(file);
 
 	ctx->fileSaveExited = true;
 
-	pthread_exit(NULL);
+	return NULL;
 }
 
 static void *thread_get_data(void *arg)
 {
 	struct filesave_context *ctx = (struct filesave_context *)arg;
 	BufferManager *manager = ctx->bufManager;
+	int sample_count = ctx->sample_count;
 
 	printf("start %s\n", __func__);
 	for (int i = 0; i < 64; i++) {
 		DataBuffer *b = new DataBuffer();
-		b->buf = (char *)malloc(512);
-		b->size = 512;
+		b->buf = (char *)malloc(sample_count *2);
+		b->size = sample_count *2;
 		manager->queueClientFreeBuffer(b);
 	}
 
@@ -167,7 +171,7 @@ static void *thread_get_data(void *arg)
 					__func__, ret);
 			pthread_exit(NULL);
 		}
-		frames += 256;
+		frames += sample_count;
 
 		manager->queueClientDoneBuffer(buffer);
 	}
@@ -175,12 +179,13 @@ static void *thread_get_data(void *arg)
 	printf("%s: frames %d\n", __func__, frames);
 	ctx->getDataExited = true;
 
-	pthread_exit(NULL);
+	return NULL;
 }
 
 static void printUsage(char **argv)
 {
-	fprintf(stderr, "Usage: %s [-f filename] [-p] [-v] [-g agcgain]\n", argv[0]);
+	fprintf(stderr, "Usage: %s [-m pdm_devnum] [-mc pdm_in_ch] [-r ref_devnum] [-rc ref_out_ch] [-f fb_devnum] [-s filename] [-p] [-v] [-g agcgain]\n", argv[0]);
+	fprintf(stderr, "default: %s [-m 2] [-mc 4] [-r 1] [-rc 1] [-f 3] [-s /data/tmp/client.wav] [-p false] [-v false] [-g 0]\n", argv[0]);
 }
 
 static const char *defaultFileName = "/data/tmp/client.wav";
@@ -197,6 +202,11 @@ int main(int argc __unused, char *argv[])
 	int gain = 0;
 	bool passAfterTrigger = false;
 	bool verbose = false;
+	int pdm_devnum = 2;
+	int pdm_in_ch = 4;
+	int ref_devnum = 1;
+	int ref_out_ch = 1;
+	int fb_devnum = 3;
 
 	memset(ctx, 0, sizeof(*ctx));
 	ctx->bufManager = bufManager;
@@ -205,7 +215,32 @@ int main(int argc __unused, char *argv[])
 	char **myArgv = argv;
 	myArgv++;
 	while (*myArgv) {
-		if (strcmp(*myArgv, "-f") == 0) {
+		if (strcmp(*myArgv, "-m") == 0) {
+			myArgv++;
+			if (*myArgv) {
+				pdm_devnum = atoi(*myArgv);
+			}
+		} else if (strcmp(*myArgv, "-mc") == 0) {
+			myArgv++;
+			if (*myArgv) {
+				pdm_in_ch = atoi(*myArgv);
+			}
+		} else if (strcmp(*myArgv, "-r") == 0) {
+			myArgv++;
+			if (*myArgv) {
+				ref_devnum = atoi(*myArgv);
+			}
+		} else if (strcmp(*myArgv, "-rc") == 0) {
+			myArgv++;
+			if (*myArgv) {
+				ref_out_ch = atoi(*myArgv);
+			}
+		} else if (strcmp(*myArgv, "-f") == 0) {
+			myArgv++;
+			if (*myArgv) {
+				fb_devnum = atoi(*myArgv);
+			}
+		} else if (strcmp(*myArgv, "-s") == 0) {
 			filesave = true;
 			myArgv++;
 			if (*myArgv) {
@@ -243,22 +278,26 @@ int main(int argc __unused, char *argv[])
 	ctx->handle = handle;
 
 	memset(&c, 0, sizeof(c));
-	c.use_feedback = true;
-	c.pdm_devnum = 2;
-	c.ref_devnum = 1;
-	c.feedback_devnum = 3;
-	c.pdm_chnum = 4;
+	c.use_feedback = false;
+	c.pdm_devnum = pdm_devnum;
+	c.pdm_devnum2 = pdm_devnum + 1;
+	c.ref_devnum = ref_devnum;
+	c.feedback_devnum = fb_devnum;
+	c.pdm_chnum = pdm_in_ch;
 	c.pdm_gain = gain;
-	c.ref_resample_out_chnum = 1;
+	c.ref_resample_out_chnum = ref_out_ch;
 	c.check_trigger = true;
 	c.trigger_done_ret_value = 1;
 	c.pass_after_trigger = passAfterTrigger;
 	c.verbose = verbose;
 
-	c.cb.init = PVPRE_Init;
-	c.cb.process = PVPRE_Process_4ch;
-	c.cb.post_process = PoVoGateSource;
-	c.cb.deinit = PVPRE_Close;
+	c.cb.init = ECNR_Init;
+	if (c.pdm_chnum == 4)
+		c.cb.process = ECNR_Process_4ch;
+	else
+		c.cb.process = ECNR_Process_2ch;
+	c.cb.post_process = ECNR_PostProcess;
+	c.cb.deinit = ECNR_DeInit;
 
 	ret = nx_voice_start(handle, &c);
 	if (ret < 0) {
@@ -276,7 +315,20 @@ int main(int argc __unused, char *argv[])
 	pthread_t tid_save;
 	pthread_t tid_get_data;
 
+	pthread_attr_t sched_attr;
+	int fifoMaxPriority;
+	struct sched_param sched_param;
+
+	pthread_attr_init(&sched_attr);
+	pthread_attr_setschedpolicy(&sched_attr, SCHED_FIFO);
+	fifoMaxPriority = sched_get_priority_max(SCHED_FIFO);
+
+	/* thread_file_save, thread_get data is max - 1 */
+	sched_param.sched_priority = fifoMaxPriority - 1;
+	pthread_attr_setschedparam(&sched_attr, &sched_param);
+
 	if (filesave == true) {
+		ctx->sample_count = (c.pdm_chnum == 4)? 256 : 512;
 		pthread_create(&tid_save, NULL, thread_file_save, (void *)ctx);
 		pthread_create(&tid_get_data, NULL, thread_get_data, (void *)ctx);
 	}
@@ -304,6 +356,9 @@ int main(int argc __unused, char *argv[])
 
 	nx_voice_stop(handle);
 	nx_voice_close_handle(handle);
+
+	delete bufManager;
+	delete ctx;
 
 	printf("%s Exit\n", __func__);
 	return 0;

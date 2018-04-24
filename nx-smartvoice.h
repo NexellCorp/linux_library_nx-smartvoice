@@ -33,6 +33,7 @@ struct ecnr_callback {
 struct nx_smartvoice_config {
 	bool use_feedback; /* use alsa feedback driver interface */
 	int pdm_devnum; /* alsa pdm device number */
+	int pdm_devnum2; /* alsa pdm device number */
 	int ref_devnum; /* alsa reference device number */
 	int feedback_devnum; /* alsa feedback device number, valid when use_feedback is true */
 	int pdm_chnum; /* 2 or 4 */

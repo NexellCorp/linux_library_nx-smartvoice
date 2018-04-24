@@ -19,59 +19,8 @@
 #ifndef __BUFFERMANAGER_H__
 #define __BUFFERMANAGER_H__
 
-#include <queue>
-#include <mutex>
-
-// namespace android {
-
-//#define TRACE_BUFFER
-#ifdef TRACE_BUFFER
-#define tr_b(a...) LOGE(a)
-#else
-#define tr_b(a...)
-#endif
-
-template <class T>
-class NXQueue
-{
-public:
-    NXQueue() {
-    };
-
-    virtual ~NXQueue() {
-    }
-
-    void queue(const T& item) {
-		std::lock_guard<std::mutex> guard(mutex);
-		q.push(item);
-    }
-
-    const T& dequeue() {
-		std::lock_guard<std::mutex> guard(mutex);
-        const T& item = q.front();
-        q.pop();
-        return item;
-    }
-
-    bool isEmpty() {
-		std::lock_guard<std::mutex> guard(mutex);
-        return q.empty();
-    }
-
-    size_t size() {
-		std::lock_guard<std::mutex> guard(mutex);
-        return q.size();
-    }
-
-    const T& getHead() {
-		std::lock_guard<std::mutex> guard(mutex);
-        return q.front();
-    }
-
-private:
-	std::queue<T> q;
-	std::mutex mutex;
-};
+#include <NXQueue.h>
+using namespace android;
 
 struct DataBuffer {
 	int size;
@@ -81,6 +30,7 @@ struct DataBuffer {
 
 struct DoneBuffer {
 	DataBuffer *pcmBuffer;
+	DataBuffer *pcmBuffer2;
 	DataBuffer *refBuffer;
 };
 
@@ -90,11 +40,14 @@ public:
 	BufferManager();
 	virtual ~BufferManager();
 
-	void Init(int pcmBufSize, int refBufSize, int outBufSize);
+	void Init(int pcmBufSize, int pcmBufSize2, int refBufSize, int outBufSize);
 	DataBuffer *getPcmBuffer();
 	void putPcmBuffer(DataBuffer *b);
+	DataBuffer *getPcmBuffer2();
+	void putPcmBuffer2(DataBuffer *b);
 	DataBuffer *getRefBuffer();
 	void putRefBuffer(DataBuffer *b);
+	bool getRefFreeSync();
 	DoneBuffer *getDoneBuffer();
 	DoneBuffer *getDoneBufferNoLock();
 	void putDoneBuffer(DoneBuffer *b);
@@ -112,11 +65,14 @@ public:
 
 private:
 	int PcmBufSize;
+	int PcmBufSize2;
 	int RefBufSize;
 	int OutBufSize;
 
 	NXQueue<DataBuffer *> PcmFreeQ;
 	NXQueue<DataBuffer *> PcmDoneQ;
+	NXQueue<DataBuffer *> PcmFreeQ2;
+	NXQueue<DataBuffer *> PcmDoneQ2;
 	NXQueue<DataBuffer *> RefFreeQ;
 	NXQueue<DataBuffer *> RefDoneQ;
 	NXQueue<DataBuffer *> OutFreeQ;
