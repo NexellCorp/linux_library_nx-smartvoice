@@ -48,6 +48,30 @@ LOCAL_STATIC_LIBRARIES += \
 	libagcpdm \
 	libresample
 
+ifneq ($(filter pvo,$(SVOICE_ECNR_VENDOR)),)
+LOCAL_SRC_FILES += \
+	pvo.c
+LOCAL_C_INCLUDES += \
+	$(LOCAL_PATH)/../../library/libpowervoice
+LOCAL_SHARED_LIBRARIES += \
+	libpvo \
+	libpovosource
+endif
+
+ifneq ($(filter mwsr,$(SVOICE_ECNR_VENDOR)),)
+LOCAL_SRC_FILES += \
+	mwsr.c
+LOCAL_C_INCLUDES += \
+	$(LOCAL_PATH)/../../library/libmwsr
+LOCAL_SHARED_LIBRARIES += \
+	libmwsr
+endif
+
+ifneq ($(filter bypass,$(SVOICE_ECNR_VENDOR)),)
+LOCAL_SRC_FILES += \
+	bypass.c
+endif
+
 include $(BUILD_SHARED_LIBRARY)
 
 # test-svoice
@@ -71,8 +95,6 @@ LOCAL_SHARED_LIBRARIES += \
 	libnxvoice
 
 ifneq ($(filter pvo,$(SVOICE_ECNR_VENDOR)),)
-LOCAL_SRC_FILES += \
-	pvo.c
 LOCAL_C_INCLUDES += \
 	$(LOCAL_PATH)/../../library/libpowervoice
 LOCAL_SHARED_LIBRARIES += \
@@ -81,17 +103,10 @@ LOCAL_SHARED_LIBRARIES += \
 endif
 
 ifneq ($(filter mwsr,$(SVOICE_ECNR_VENDOR)),)
-LOCAL_SRC_FILES += \
-	mwsr.c
 LOCAL_C_INCLUDES += \
 	$(LOCAL_PATH)/../../library/libmwsr
 LOCAL_SHARED_LIBRARIES += \
 	libmwsr
-endif
-
-ifneq ($(filter bypass,$(SVOICE_ECNR_VENDOR)),)
-LOCAL_SRC_FILES += \
-	bypass.c
 endif
 
 LOCAL_LDLIBS := -llog
