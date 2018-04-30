@@ -35,6 +35,7 @@
 #include "resample.h"
 #include "buffermanager.h"
 #include "nx-smartvoice.h"
+#include "ecnr_wrapper.h"
 
 //#define TRACE_TIME
 
@@ -623,6 +624,14 @@ static void *thread_ecnr(void *arg)
 	int sample_size = (ctx->config.pdm_chnum == 4)? 256 : 512;
 	short *tmpBuffer, *tmpBuffer2;
 
+	ctx->config.cb.init = ECNR_Init;
+	if (ctx->config.pdm_chnum == 4)
+		ctx->config.cb.process = ECNR_Process_4ch;
+	else
+		ctx->config.cb.process = ECNR_Process_2ch;
+	ctx->config.cb.post_process = ECNR_PostProcess;
+	ctx->config.cb.deinit = ECNR_DeInit;
+
 	if (cb->init)
 		cb->init(0, 0, NULL);
 
@@ -702,10 +711,10 @@ static void *thread_ecnr(void *arg)
 				} else {
 					if (ctx->clientWait && ctx->pipe[1] > 0) {
 						if (ctx->config.pdm_chnum == 4)
-							write(ctx->pipe[1], tmpBuffer, sizeof(tmpBuffer));
+							write(ctx->pipe[1], tmpBuffer, sizeof(short) * sample_size);
 						else {
 							if (ret == 0)
-								write(ctx->pipe[1], tmpBuffer, sizeof(tmpBuffer));
+								write(ctx->pipe[1], tmpBuffer, sizeof(short) * sample_size);
 						}
 					}
 				}

@@ -99,7 +99,7 @@ int	ECNR_Process_4ch(short *mic4_buf, short *ref_buf __unused, short *out_buf __
 	frames += 256;
 	/* 256 samples * 2 bytes * 4 channels*/
 	fwrite(mic4_buf, 1, 2048, file);
-#else
+#endif
 	int i;
 	short *in, *out;
 
@@ -110,7 +110,7 @@ int	ECNR_Process_4ch(short *mic4_buf, short *ref_buf __unused, short *out_buf __
 		out++;
 		in += 4;
 	}
-#endif
+
 	return 0;
 }
 
@@ -144,7 +144,7 @@ int	ECNR_Process_2ch(short *mic0_buf, short *mic1_buf __unused,
 	frames += 512;
 	/* 512 samples * 2 bytes */
 	fwrite(mic0_comb, 1, 1024, file);
-#else
+#endif
 	int i;
 	short *in, *out;
 
@@ -155,7 +155,7 @@ int	ECNR_Process_2ch(short *mic0_buf, short *mic1_buf __unused,
 		out++;
 		in++;
 	}
-#endif
+
 	return 0;
 }
 

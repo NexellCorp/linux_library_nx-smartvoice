@@ -291,14 +291,6 @@ int main(int argc __unused, char *argv[])
 	c.pass_after_trigger = passAfterTrigger;
 	c.verbose = verbose;
 
-	c.cb.init = ECNR_Init;
-	if (c.pdm_chnum == 4)
-		c.cb.process = ECNR_Process_4ch;
-	else
-		c.cb.process = ECNR_Process_2ch;
-	c.cb.post_process = ECNR_PostProcess;
-	c.cb.deinit = ECNR_DeInit;
-
 	ret = nx_voice_start(handle, &c);
 	if (ret < 0) {
 		fprintf(stderr, "failed to nx_voice_start, ret %d\n", ret);
