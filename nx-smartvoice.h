@@ -39,6 +39,7 @@ struct nx_smartvoice_config {
 	int pdm_chnum; /* 2 or 4 */
 	int pdm_gain; /* pdm gain value */
 	int ref_resample_out_chnum; /* input 48KHz, 2channel, output 16KHz is fixed, output channel num(1 or 2) */
+	int sample_count; /* ecnr sample count : default 256 samples*/
 	bool check_trigger; /* if true, check encr_process return value and print trigger done */
 	int trigger_done_ret_value; /* if check_trigger true and ecnr_process return this value, print trigger done */
 	bool pass_after_trigger; /* if true, write only triggered data */

@@ -184,8 +184,8 @@ static void *thread_get_data(void *arg)
 
 static void printUsage(char **argv)
 {
-	fprintf(stderr, "Usage: %s [-m pdm_devnum] [-mc pdm_in_ch] [-r ref_devnum] [-rc ref_out_ch] [-f fb_devnum] [-s filename] [-p] [-v] [-g agcgain]\n", argv[0]);
-	fprintf(stderr, "default: %s [-m 2] [-mc 4] [-r 1] [-rc 1] [-f 3] [-s /data/tmp/client.wav] [-p false] [-v false] [-g 0]\n", argv[0]);
+	fprintf(stderr, "Usage: %s [-m pdm_devnum] [-mc pdm_in_ch] [-r ref_devnum] [-rc ref_out_ch] [-c sample_count] [-f fb_devnum] [-s filename] [-p] [-v] [-g agcgain]\n", argv[0]);
+	fprintf(stderr, "default: %s [-m 2] [-mc 4] [-r 1] [-rc 1] [-c 256] [-f 3] [-s /data/tmp/client.wav] [-p false] [-v false] [-g 0]\n", argv[0]);
 }
 
 static const char *defaultFileName = "/data/tmp/client.wav";
@@ -207,6 +207,7 @@ int main(int argc __unused, char *argv[])
 	int ref_devnum = 1;
 	int ref_out_ch = 1;
 	int fb_devnum = 3;
+	int sample_count = 256;
 
 	memset(ctx, 0, sizeof(*ctx));
 	ctx->bufManager = bufManager;
@@ -234,6 +235,11 @@ int main(int argc __unused, char *argv[])
 			myArgv++;
 			if (*myArgv) {
 				ref_out_ch = atoi(*myArgv);
+			}
+		} else if (strcmp(*myArgv, "-c") == 0) {
+			myArgv++;
+			if (*myArgv) {
+				sample_count = atoi(*myArgv);
 			}
 		} else if (strcmp(*myArgv, "-f") == 0) {
 			myArgv++;
@@ -286,6 +292,7 @@ int main(int argc __unused, char *argv[])
 	c.pdm_chnum = pdm_in_ch;
 	c.pdm_gain = gain;
 	c.ref_resample_out_chnum = ref_out_ch;
+	c.sample_count = sample_count;
 	c.check_trigger = true;
 	c.trigger_done_ret_value = 1;
 	c.pass_after_trigger = passAfterTrigger;
@@ -320,7 +327,7 @@ int main(int argc __unused, char *argv[])
 	pthread_attr_setschedparam(&sched_attr, &sched_param);
 
 	if (filesave == true) {
-		ctx->sample_count = (c.pdm_chnum == 4)? 256 : 512;
+		ctx->sample_count = sample_count;
 		pthread_create(&tid_save, NULL, thread_file_save, (void *)ctx);
 		pthread_create(&tid_get_data, NULL, thread_get_data, (void *)ctx);
 	}

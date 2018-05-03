@@ -103,7 +103,6 @@ struct nx_voice_context {
 	bool pdmExit2;
 	bool pdmExited;
 	bool pdmExited2;
-	bool refStarted;
 	bool refExit;
 	bool refExited;
 	bool ecnrExit;
@@ -397,13 +396,14 @@ static void *thread_ref(void *arg)
 	char *buffer = NULL;
 	DataBuffer *outBuffer = NULL;
 
-	int ret, status_fd, config_fd;
+	int ret, status_fd, config_fd, dfs_fd;
 	char pb_status[2] = {};
 	char pb_config[10] = {};
+	char dfs_stat[2] = {};
 	const char c[2] = ",";
 	char *t;
 	bool is_playback = false;
-	bool exist_play = false;
+	bool dfs = false;
 #ifdef FILE_DUMP
 	FILE *file;
 
@@ -412,36 +412,32 @@ static void *thread_ref(void *arg)
 		fprintf(stderr, "%s: failed to create\n", __func__);
 	}
 #endif
-	status_fd = open("/sys/devices/platform/svoice/status", O_RDONLY);
-	if (status_fd < 0) {
-		LOGE("%s: failed to open playback status\n", __func__);
-	}
-	read(status_fd, pb_status, 1);
-	close(status_fd);
-	if (!strcmp("1", pb_status)) {
-		if (!pcm) {
-			config_fd = open("/sys/devices/platform/svoice/config", O_RDONLY);
-			if (config_fd < 0) {
-				LOGE("%s: failed to open playback status\n", __func__);
+	if (!pcm) {
+		config_fd = open("/sys/devices/platform/svoice/config", O_RDONLY);
+		if (config_fd < 0) {
+			LOGE("%s: failed to open playback status\n", __func__);
+		} else {
+			ret = read(config_fd, pb_config, 10);
+			if (ret > 1) {
+				t = strtok(pb_config, c);
+				config.rate = atoi(t);
+				t = strtok(NULL, c);
+				config.format = (atoi(t) == 16) ? PCM_FORMAT_S16_LE : PCM_FORMAT_S24_LE;
 			}
-			read(config_fd, pb_config, 10);
-			close(config_fd);
-			t = strtok(pb_config, c);
-			config.rate = atoi(t);
-			t = strtok(NULL, c);
-			config.format = (atoi(t) == 16) ? PCM_FORMAT_S16_LE : PCM_FORMAT_S24_LE;
-			rctx = audio_resample_init(ctx->config.ref_resample_out_chnum,
-									   2, OUT_RATE, config.rate,
-									   (config.format == PCM_FORMAT_S16_LE)?
-									   PCM_FMT_16BIT : PCM_FMT_32BIT);
-			ctx->refUnitSize = calcUnitSize(BASE_INTERVAL_US, config.rate,
-											(config.format == PCM_FORMAT_S16_LE) ? 16 : 32, 2);
-			config.period_size = ctx->refUnitSize/
-				((config.format == PCM_FORMAT_S16_LE) ? 4 : 8);
+		}
+		close(config_fd);
+		rctx = audio_resample_init(ctx->config.ref_resample_out_chnum,
+								   2, OUT_RATE, config.rate,
+								   (config.format == PCM_FORMAT_S16_LE)?
+								   PCM_FMT_16BIT : PCM_FMT_32BIT);
+		ctx->refUnitSize = calcUnitSize(BASE_INTERVAL_US, config.rate,
+										(config.format == PCM_FORMAT_S16_LE) ? 16 : 32, 2);
+		config.period_size = ctx->refUnitSize/
+			((config.format == PCM_FORMAT_S16_LE) ? 4 : 8);
 #ifdef NOUGAT
-			pcm = pcm_open(0, ctx->config.ref_devnum, PCM_IN, &config);
+		pcm = pcm_open(0, ctx->config.ref_devnum, PCM_IN, &config);
 #else
-			pcm = pcm_open(ctx->config.ref_devnum, 0, PCM_IN, &config);
+		pcm = pcm_open(ctx->config.ref_devnum, 0, PCM_IN, &config);
 #endif
 		if (!pcm || !pcm_is_ready(pcm)) {
 			LOGE("%s: unable_to open PCM device(%s)\n",
@@ -453,16 +449,20 @@ static void *thread_ref(void *arg)
 		ret = pcm_ioctl(pcm, SNDRV_PCM_IOCTL_STATUS, &status, 0);
 		if (status.state == SNDRV_PCM_STATE_SETUP)
 			pcm_start(pcm);
-		}
 	}
-	ctx->refStarted = true;
 #ifdef TRACE_TIME
 	gettimeofday(&ref_tv_before, NULL);
 #endif
-	if (!access("/dev/snd/pcmC0D0p", O_RDONLY))
-		exist_play = true;
+	dfs_fd = open("/sys/devices/platform/svoice/dfs", O_RDONLY);
+	if (dfs_fd < 0) {
+		LOGE("%s: failed to open dfs\n", __func__);
+	}
+	read(dfs_fd, dfs_stat, 1);
+	close(dfs_fd);
+	if (!strcmp("1", dfs_stat))
+		dfs = true;
 	while (!ctx->refExit) {
-		if (exist_play) {
+		if (dfs) {
 			status_fd = open("/sys/devices/platform/svoice/status", O_RDONLY);
 			if (status_fd < 0) {
 				LOGE("%s: failed to open playback status\n", __func__);
@@ -474,13 +474,16 @@ static void *thread_ref(void *arg)
 					config_fd = open("/sys/devices/platform/svoice/config", O_RDONLY);
 					if (config_fd < 0) {
 						LOGE("%s: failed to open playback status\n", __func__);
+					} else {
+						ret = read(config_fd, pb_config, 10);
+						if (ret > 1) {
+							t = strtok(pb_config, c);
+							config.rate = atoi(t);
+							t = strtok(NULL, c);
+							config.format = (atoi(t) == 16) ? PCM_FORMAT_S16_LE : PCM_FORMAT_S24_LE;
+						}
 					}
-					read(config_fd, pb_config, 10);
 					close(config_fd);
-					t = strtok(pb_config, c);
-					config.rate = atoi(t);
-					t = strtok(NULL, c);
-					config.format = (atoi(t) == 16) ? PCM_FORMAT_S16_LE : PCM_FORMAT_S24_LE;
 					rctx = audio_resample_init(ctx->config.ref_resample_out_chnum,
 											   2, OUT_RATE, config.rate,
 											   (config.format == PCM_FORMAT_S16_LE)?
@@ -595,11 +598,12 @@ static void *thread_ref(void *arg)
 		fwrite(outBuffer->buf, 1, outBuffer->size, file);
 #endif
 		manager->putRefBuffer(outBuffer);
+		outBuffer = NULL;
 	}
 #ifdef FILE_DUMP
 	fclose(file);
 #endif
-	if (!exist_play) {
+	if (!dfs) {
 		free(buffer);
 		pcm_close(pcm);
 		audio_resample_close(rctx);
@@ -621,7 +625,7 @@ static void *thread_ecnr(void *arg)
 	int spot_idx = 1;
 	/* feedback unit size is same to ecnr out size */
 	int size = ctx->feedbackUnitSize;
-	int sample_size = (ctx->config.pdm_chnum == 4)? 256 : 512;
+	int sample_size = ctx->config.sample_count;
 	short *tmpBuffer, *tmpBuffer2;
 
 	ctx->config.cb.init = ECNR_Init;
@@ -710,9 +714,10 @@ static void *thread_ecnr(void *arg)
 					manager->putOutBuffer(outBuffer);
 				} else {
 					if (ctx->clientWait && ctx->pipe[1] > 0) {
-						if (ctx->config.pdm_chnum == 4)
-							write(ctx->pipe[1], tmpBuffer, sizeof(short) * sample_size);
-						else {
+						if (ctx->config.pdm_chnum == 4) {
+							if (ret == 0)
+								write(ctx->pipe[1], tmpBuffer, sizeof(short) * sample_size);
+						} else {
 							if (ret == 0)
 								write(ctx->pipe[1], tmpBuffer, sizeof(short) * sample_size);
 						}
@@ -864,7 +869,6 @@ extern "C" int nx_voice_start(void *handle, struct nx_smartvoice_config *c)
 	ctx->pdmExited = false;
 	ctx->pdmExit2 = false;
 	ctx->pdmExited2 = false;
-	ctx->refStarted = false;
 	ctx->refExit = false;
 	ctx->refExited = false;
 	ctx->ecnrExit = false;
@@ -916,8 +920,6 @@ extern "C" int nx_voice_start(void *handle, struct nx_smartvoice_config *c)
 
 		pthread_create(&ctx->tid[THREAD_IDX_REF], &sched_attr, thread_ref,
 					   (void *)ctx);
-		while (!ctx->refStarted)
-			usleep(1000);
 
 		pthread_create(&ctx->tid[THREAD_IDX_PDM], &sched_attr, thread_pdm,
 					   (void *)ctx);
@@ -995,7 +997,7 @@ extern "C" int nx_voice_get_data(void *handle, short *data, int sample_count)
 	int ret = 0;
 	int data_size = sample_count * 2;
 	char *p;
-	int sample_chk = (ctx->config.pdm_chnum == 4)? 256 : 512;
+	int sample_chk = ctx->config.sample_count;
 
 	if ((sample_count % sample_chk) != 0) {
 		LOGE("sample count must be multiple of %d but %d\n",

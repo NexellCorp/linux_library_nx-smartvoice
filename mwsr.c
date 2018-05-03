@@ -5,16 +5,17 @@
 #include "ecnr_wrapper.h"
 #include "mwsr_main.h"
 
-MwsrHandle			*m_hMWInst;
+MwsrHandle *m_hMWInst;
+static short mic4_comb[2048];
 static short mic0_comb[512];
 static short mic1_comb[512];
 static short ref_comb[512];
 static bool is_ready = false;
 
 #ifdef FILE_DUMP
-	FILE *mic0_file;
-	FILE *mic1_file;
-	FILE *ref_file;
+static FILE *mic0_file = NULL;
+static FILE *mic1_file = NULL;
+static FILE *ref_file = NULL;
 #endif
 
 void ECNR_Init(int val1 __unused, int val2 __unused, char *dummy __unused)
@@ -38,13 +39,38 @@ void ECNR_Init(int val1 __unused, int val2 __unused, char *dummy __unused)
 #endif
 
 	Mwsr_Create(&m_hMWInst);
-	Mwsr_Init(m_hMWInst);
+	Mwsr_Init(m_hMWInst, NULL);
 }
 
 int ECNR_Process_4ch(short *mic4_buf __unused, short *ref_buf __unused,
 			 short *out_buf __unused, short *outbuf2 __unused, int mode __unused)
 {
-	//Mwsr_Process(m_hMWInst, mic4_buf, ref_buf, out_buf);
+	void *pdst = NULL;
+
+	if (!is_ready) {
+		pdst = mic4_comb;
+		memcpy((void *)pdst, (void *)mic4_buf, 2048);
+		pdst = ref_comb;
+		memcpy((void *)pdst, (void *)ref_buf, 512);
+
+		is_ready = true;
+		return -1;
+	} else {
+		pdst = mic4_comb + 1024;
+		memcpy((void *)pdst, (void *)mic4_buf, 2048);
+		pdst = ref_comb + 256;
+		memcpy((void *)pdst, (void *)ref_buf, 512);
+
+		is_ready = false;
+	}
+
+#ifdef FILE_DUMP
+	/* 512 samples * 2 bytes * 4 channels*/
+	fwrite(mic4_buf, 1, 4096, mic0_file);
+	/* 512 samples * 2 bytes * 1 channels*/
+	fwrite(ref_buf, 1, 1024, ref_file);
+#endif
+	Mwsr_Process(m_hMWInst, mic4_comb, ref_comb, out_buf);
 
 	return 0;
 }
@@ -76,12 +102,15 @@ int ECNR_Process_2ch(short *mic0_buf, short *mic1_buf,
 	}
 
 #ifdef FILE_DUMP
+	/* 512 samples * 2 bytes * 1 channels*/
 	fwrite(mic0_comb, 1, 1024, mic0_file);
+	/* 512 samples * 2 bytes * 1 channels*/
 	fwrite(mic1_comb, 1, 1024, mic1_file);
+	/* 512 samples * 2 bytes * 1 channels*/
 	fwrite(ref_comb, 1, 1024, ref_file);
 #endif
 
-	Mwsr_Process(m_hMWInst, mic0_comb, mic1_comb, ref_comb, out_buf);
+	//Mwsr_Process(m_hMWInst, mic0_comb, mic1_comb, ref_comb, out_buf);
 
 	return 0;
 }
